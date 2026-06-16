@@ -77,28 +77,73 @@ def register_on_message(client, account_name: str):
         if trace:
             trace.gate("safety", True)
 
+        from plugins.leona_discord.lib.sleep_forced_wake import (
+            handle_sleep_mention,
+            wrap_forced_wake_content,
+        )
         from plugins.leona_discord.lib.sleep_schedule import is_channel_asleep
-        from plugins.leona_discord.lib.store import buffer_sleep_mention
+        from plugins.leona_discord.lib.store import (
+            buffer_sleep_mention,
+            mark_sleep_buffer_message_processed,
+        )
 
         if is_channel_asleep(account_name, channel_id_str):
-            if mentioned:
-                buffered = buffer_sleep_mention(
-                    account_name,
-                    guild_id,
-                    channel_id_str,
-                    str(message.id),
-                    author_id,
-                    message.author.name,
-                    message.author.display_name,
-                    message.clean_content or "",
-                    image_urls=collect_image_urls(message),
-                )
-                if trace:
-                    trace.gate("sleep_buffer", buffered, "direct @mention held until wake")
-                    trace.finish("sleep_buffered_mention" if buffered else "sleep_duplicate_mention")
-            else:
+            if not mentioned:
                 if trace:
                     trace.finish("sleep_dormant")
+                return
+
+            buffer_sleep_mention(
+                account_name,
+                guild_id,
+                channel_id_str,
+                str(message.id),
+                author_id,
+                message.author.name,
+                message.author.display_name,
+                message.clean_content or "",
+                image_urls=collect_image_urls(message),
+            )
+            global_s = get_plugin_settings().get("global", {}) or {}
+            wake_hint = handle_sleep_mention(account_name, channel_id_str, global_s)
+            if wake_hint is None:
+                if trace:
+                    trace.gate("sleep_buffer", True, "direct @mention held until wake")
+                    trace.finish("sleep_buffered_mention")
+                return
+
+            mark_sleep_buffer_message_processed(
+                account_name, channel_id_str, str(message.id),
+            )
+            if trace:
+                trace.gate("sleep_forced_wake", True, "replying while temporarily awake")
+
+            image_urls = collect_image_urls(message)
+            raw_content = wrap_forced_wake_content(
+                message.clean_content or "", wake_hint,
+            )
+            msg_data = {
+                "message_id": str(message.id),
+                "content": raw_content,
+                "clean_content": raw_content,
+                "username": message.author.name,
+                "display_name": message.author.display_name,
+                "author_id": author_id,
+                "mentioned": str(mentioned),
+                "image_urls": image_urls,
+            }
+
+            append_message(channel_key, msg_data, guild_id=guild_id)
+            record_message(channel_key)
+
+            if trace:
+                trace.gate("persisted_history", True)
+
+            batch = get_or_create_batch(account_name, message)
+            queue_message(batch, msg_data)
+            if trace:
+                trace.gate("batched", True)
+                trace.finish("queued_forced_wake_reply")
             return
 
         image_urls = collect_image_urls(message)

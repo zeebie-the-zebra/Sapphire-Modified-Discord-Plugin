@@ -11,12 +11,20 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 ### Sleep schedule
 
 - **Goodnight → dormant → wake → buffered @mentions** (`lib/sleep_schedule.py`, `schedule/sleep_goodnight.py`, `lib/sleep_buffer.py`)
-- Random goodnight minute within sleep UTC hour; morning greeting wakes channel; max N newest overnight @mentions replied (default 3)
+- Random goodnight minute within sleep hour; morning greeting wakes channel; max N newest overnight @mentions replied (default 3)
+- **AI-generated goodnight** — optional LLM goodnight message with instructions, fallback, and optional dedicated model (`lib/goodnight_llm.py`, `schedule/sleep_goodnight.py`)
+- **Forced wake** — if enough direct @mentions arrive in a rolling window while asleep, the bot wakes temporarily, replies with a grumpy “you woke me up” LLM hint, then goes dormant again after a configurable duration (`lib/sleep_forced_wake.py`, `forced_wake_until` on `sleep_state`)
+- **Schedule hours in local time** — Quiet Hours, Sleep, Wake (greeting), and Outreach active hours are edited in the browser’s local timezone; values are stored as UTC on the server (`web/index.js` conversion helpers)
 
 ### Tabbed Global Settings UI
 
 - Global Settings are split into tabs (General, Replies, Reactions & Media, Memory, Presence, Advanced, Debug) instead of one long scroll
 - Response Debug Traces viewer moved into the Debug tab
+- **Proactive LLM provider dropdowns** — Greeting, Outreach, and Goodnight model provider fields use the same `/api/llm/providers` dropdown as Image Understanding (no manual provider string entry)
+
+### Proactive message identity
+
+- Greeting, outreach, goodnight, and sleep-buffer replies label the bot’s own history as **You:** and strip accidental self-greetings by name (`lib/bot_identity.py`, `lib/history.py` `format_proactive_history`)
 
 ### Variable response delay
 
@@ -72,17 +80,47 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 - **Message Edits** toggle in Global Settings (per-server personality fields) — enables LLM `[edit:…]` hints and automatic post-send edits
 - **Server-side Debug Logging** toggle (renamed from Debug Traces) — controls whether incoming messages write gate-decision traces to SQLite; view results in Response Debug Traces
+- **Sleep schedule** controls in Presence tab: sleep hour, buffered @mention cap, forced wake (threshold / window / stay-awake duration), goodnight LLM fields
+- **Local schedule hours** — Quiet Hours, Sleep, Wake, and Outreach active hours show timezone label and UTC save hints
+
+### Settings keys (sleep & forced wake)
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `sleep_schedule_enabled` | off | Master sleep toggle |
+| `sleep_utc_hour` | 22 | Goodnight hour (UTC, set via local-time UI) |
+| `sleep_buffered_reply_max` | 3 | Max morning drain replies |
+| `sleep_forced_wake_enabled` | off | Forced wake toggle |
+| `sleep_forced_wake_mention_count` | 3 | @mentions required in window |
+| `sleep_forced_wake_window_minutes` | 15 | Rolling count window |
+| `sleep_forced_wake_duration_minutes` | 30 | Temporary awake period |
+
+### New / updated modules (v1.4.0)
+
+| Module | Purpose |
+|--------|---------|
+| `lib/sleep_schedule.py` | Sleep/wake state, goodnight timing, target channels |
+| `lib/sleep_buffer.py` | Drain buffered overnight @mentions after morning wake |
+| `lib/sleep_forced_wake.py` | Threshold-based forced wake while asleep |
+| `lib/goodnight_llm.py` | LLM-generated goodnight text |
+| `schedule/sleep_goodnight.py` | Periodic goodnight + enter sleep state |
+
+### Schedule additions (v1.4.0)
+
+| Job | Cron | Handler |
+|-----|------|---------|
+| `sleep_goodnight` | `*/15 * * * *` | `schedule/sleep_goodnight.py` |
 
 ---
 
-## Tier 5 — Proactive presence & media (v1.3.0)
+## Stage 5 — Proactive presence & media (v1.3.0)
 
 ### LLM morning greetings
 
 - Morning greeting text can be **AI-generated** each day instead of a static template (`lib/greeting_llm.py`)
 - Greeting/outreach LLM context labels the bot's own history lines as **You:** and forbids self-greetings by name (`lib/bot_identity.py`, `lib/history.py`)
 - Settings: **AI-Generated Greeting**, **Greeting Instructions** (LLM prompt, not posted verbatim), **Fallback Message**, optional greeting model provider/name/max tokens
-- Schedule still runs hourly and posts only at the configured **UTC hour** (`schedule/morning_greeting.py`)
+- Schedule still runs hourly and posts only at the configured wake hour (stored as UTC; UI shows local time since v1.4.0)
 - Uses recent channel history for variety; falls back to static text if the LLM is unavailable
 
 ### Greeting channel picker
@@ -98,7 +136,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 - Proactive **conversation starters** when configured channels go quiet (`schedule/quiet_outreach.py`)
 - Sapphire schedule: **every 15 minutes** (`quiet_outreach` cron)
-- Defaults: quiet after **240 min**, cooldown **8 h**, skip chance **25%**, active hours **10–21 UTC**
+- Defaults: quiet after **240 min**, cooldown **8 h**, skip chance **25%**, active hours **10–21** (UTC stored; local-time UI since v1.4.0)
 - Detects quiet via last **human** message in SQLite; skips channels with no history
 - Respects global **Quiet Hours**; optional **typing indicator** delay before send
 - LLM-generated openers with instructions + fallback (`lib/outreach_llm.py` pattern shared with greetings)
@@ -112,7 +150,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 - **Sentiment fallback** (VADER/DistilBERT tier → query map) when the micro-LLM is off or returns empty — same philosophy as silent reactions
 - Settings: enable toggle, reply chance %, cooldown, content filter, optional query model provider/name
 - Per-channel GIF cooldown tracked separately from reply/reaction cooldowns (`lib/cooldowns.py`)
-- **Greeting ↔ outreach coordination** (`lib/proactive_guard.py`): successful morning greetings record the outreach cooldown; outreach skips greeting-target channels for 2 hours before the greeting UTC hour
+- **Greeting ↔ outreach coordination** (`lib/proactive_guard.py`): successful morning greetings record the outreach cooldown; outreach skips greeting-target channels for 2 hours before the greeting wake hour
 - **`discord_send_gif` tool** — LLM can explicitly search and post a GIF (use instead of `web_search` / `get_website`)
 - **`[gif:search terms]` inline tag** — optional follow-up GIF after text reply (stripped before send, like `[react:emoji]`)
 - When the user asks for a GIF, automatic follow-up **bypasses the chance roll** (`user_requested_gif`)
@@ -160,7 +198,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ---
 
-## Tier 4 — Discord-native capabilities (v1.2.0)
+## Stage 4 — Discord-native capabilities (v1.2.0)
 
 ### Slash commands
 
@@ -207,7 +245,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ---
 
-## Tier 3 — Personality & presence controls (v1.1.0)
+## Stage 3 — Personality & presence controls (v1.1.0)
 
 ### Personality presets
 
@@ -230,7 +268,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ### Scheduled presence
 
-- **Quiet hours (UTC)** — suppress random replies; modes: reactions-only or fully silent (`lib/presence.py`)
+- **Quiet hours (local)** — suppress random replies; modes: reactions-only or fully silent (`lib/presence.py`); UI shows local hours, stored as UTC (v1.4.0)
 - **Activity decay** — lower reply chance when a channel exceeds N messages in 5 minutes (`lib/activity.py`)
 - **Morning greeting** — hourly Sapphire schedule posts to configured `account:guild_id:channel_id` targets (`schedule/morning_greeting.py`)
 
@@ -252,7 +290,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ---
 
-## Tier 2 — Conversation quality
+## Stage 2 — Conversation quality
 
 ### Self-contained persistent memory
 
@@ -292,7 +330,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ---
 
-## Tier 1 — Foundation & reliability
+## Stage 1 — Foundation & reliability
 
 ### Architecture split
 
@@ -313,7 +351,7 @@ leona_discord/
 | `lib/connection.py` | Connect/disconnect with rate-limit safeguards |
 | `lib/context_cache.py` | Reply context, pending payloads, reaction dedupe |
 | `lib/cooldowns.py` | Probabilistic reply cooldown tracking |
-| `lib/history.py` | Channel history (initial in-memory; Tier 2 adds SQLite) |
+| `lib/history.py` | Channel history (initial in-memory; Stage 2 adds SQLite) |
 | `lib/images.py` | Image collection and vision-model description |
 | `lib/mentions.py` | @name and custom emoji resolution |
 | `lib/messages.py` | Long message splitting |
@@ -344,7 +382,7 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 - `on_message` logging moved to DEBUG level
 - Reaction dedupe and settings loading cleaned up in tools layer
 
-### Settings & UI (Tier 1 baseline)
+### Settings & UI (Stage 1 baseline)
 
 - Per-server overrides for response chances, cooldown, reactions, image understanding
 - **Always Online** toggle in Global Settings
@@ -355,14 +393,14 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 
 ## Version summary
 
-| Version | Tier | Focus |
-|---------|------|--------|
-| — | Tier 1 | Modular architecture, reliability, cleanup |
-| — | Tier 2 | SQLite memory, seamless recall, debug traces, context caps |
-| 1.1.0 | Tier 3 | Presets, reply modes, presence, safety-adjacent gates |
-| 1.2.0 | Tier 4 | Slash commands, rich messages, moderation layer |
-| 1.3.0 | Tier 5 | LLM greetings, quiet outreach, GIF replies, vision UI fix |
-| 1.4.0 | — | Human-like timing, sending patterns, reaction/engagement behavior, technical improvements |
+| Version | Stage | Focus |
+|---------|-------|--------|
+| — | Stage 1 | Modular architecture, reliability, cleanup |
+| — | Stage 2 | SQLite memory, seamless recall, debug traces, context caps |
+| 1.1.0 | Stage 3 | Presets, reply modes, presence, safety-adjacent gates |
+| 1.2.0 | Stage 4 | Slash commands, rich messages, moderation layer |
+| 1.3.0 | Stage 5 | LLM greetings, quiet outreach, GIF replies, vision UI fix |
+| 1.4.0 | — | Human-like timing, sleep schedule, forced wake, tabbed UI, local-time schedules, proactive identity fixes, engagement behavior |
 
 ---
 
@@ -373,6 +411,6 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 - **Slash commands**: enable `applications.commands` OAuth scope when inviting the bot
 - **Memory data**: `user/plugin_data/leona_discord/discord_memory.sqlite`
 - **Schedule tasks**: `/ask`, `/summarize`, and normal channel replies require an active `discord_message` daemon task for the bot account
-- **Morning greeting & quiet outreach**: require bot online (**Always Online** or active Schedule task) plus Sapphire continuity scheduler
+- **Morning greeting, quiet outreach & sleep schedule**: require bot online (**Always Online** or active Schedule task) plus Sapphire continuity scheduler; hour fields in the UI are local time (saved as UTC)
 - **GIF replies**: Klipy API key (recommended) or Giphy key; optional fast/cheap LLM for query selection; `requests` used for provider HTTP calls
 - **Tenor**: legacy GIF provider only — migrate to Klipy or Giphy before **June 30, 2026**

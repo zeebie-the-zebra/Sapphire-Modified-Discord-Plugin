@@ -102,6 +102,7 @@ def wake_channel(account: str, channel_id: str):
         scheduled_sleep_minute=-1,
         goodnight_sent=False,
         sleep_date="",
+        forced_wake_until=0,
     )
     logger.info(f"[LEONA-DISCORD] Sleep: {account}:{channel_id} woke up")
 

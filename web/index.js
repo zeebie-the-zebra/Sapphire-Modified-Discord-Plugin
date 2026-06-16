@@ -29,6 +29,43 @@ const _DEFAULTS = {
 // Cached provider+model data fetched from Sapphire core
 let _LLM_PROVIDERS = null;
 
+// ── Local timezone ↔ UTC hour conversion (settings UI) ─────────────────────
+// Backend schedules still run on UTC; we convert only in the browser.
+
+function _localTimezoneLabel() {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
+    } catch (_) {
+        return 'local time';
+    }
+}
+
+function _normalizeHour(h) {
+    const n = parseInt(h, 10);
+    if (!Number.isFinite(n)) return 0;
+    return ((n % 24) + 24) % 24;
+}
+
+function _utcHourToLocal(utcHour) {
+    const d = new Date();
+    d.setUTCHours(_normalizeHour(utcHour), 0, 0, 0);
+    return d.getHours();
+}
+
+function _localHourToUtc(localHour) {
+    const now = new Date();
+    const d = new Date(
+        now.getFullYear(), now.getMonth(), now.getDate(),
+        _normalizeHour(localHour), 0, 0, 0,
+    );
+    return d.getUTCHours();
+}
+
+function _formatHourLabel(h) {
+    const hour = _normalizeHour(h);
+    return `${String(hour).padStart(2, '0')}:00`;
+}
+
 // Full emoji list loaded from API; used as the grid source so all 1340 are available
 let _API_EMOJIS = null;
 
@@ -1081,6 +1118,65 @@ function _initGlobalSettingsFields(container) {
     _renderGifSettings(container, p);
     _wireGreetingTargetPicker(container, p);
     _wireOutreachTargetPicker(container, p);
+    _wireLocalScheduleHours(container, p);
+}
+
+
+function _refreshLocalScheduleHourHints(root, prefix) {
+    const tzEl = root.querySelector(`#${prefix}-local-tz-name`);
+    if (tzEl) tzEl.textContent = _localTimezoneLabel();
+
+    const quietHint = root.querySelector(`#${prefix}-quiet-hours-utc`);
+    const quietStart = root.querySelector(`#${prefix}-quiet-start`);
+    const quietEnd = root.querySelector(`#${prefix}-quiet-end`);
+    if (quietHint && quietStart && quietEnd) {
+        const s = _formatHourLabel(_localHourToUtc(quietStart.value));
+        const e = _formatHourLabel(_localHourToUtc(quietEnd.value));
+        quietHint.textContent = `Saved as ${s} – ${e} UTC`;
+    }
+
+    const outreachHint = root.querySelector(`#${prefix}-outreach-active-utc`);
+    const outreachStart = root.querySelector(`#${prefix}-outreach-active-start`);
+    const outreachEnd = root.querySelector(`#${prefix}-outreach-active-end`);
+    if (outreachHint && outreachStart && outreachEnd) {
+        const s = _formatHourLabel(_localHourToUtc(outreachStart.value));
+        const e = _formatHourLabel(_localHourToUtc(outreachEnd.value));
+        outreachHint.textContent = `Saved as ${s} – ${e} UTC`;
+    }
+
+    root.querySelectorAll(`[data-local-hour]`).forEach((el) => {
+        if (el === quietStart || el === quietEnd || el === outreachStart || el === outreachEnd) return;
+        const hintId = el.getAttribute('aria-describedby');
+        const hint = hintId ? root.querySelector(`#${hintId}`) : null;
+        if (hint) hint.textContent = `Saved as ${_formatHourLabel(_localHourToUtc(el.value))} UTC`;
+    });
+}
+
+function _wireLocalScheduleHours(root, prefix) {
+    _refreshLocalScheduleHourHints(root, prefix);
+
+    const quietStart = root.querySelector(`#${prefix}-quiet-start`);
+    const quietEnd = root.querySelector(`#${prefix}-quiet-end`);
+    if (quietStart && quietEnd) {
+        const updateQuiet = () => _refreshLocalScheduleHourHints(root, prefix);
+        quietStart.addEventListener('input', updateQuiet);
+        quietEnd.addEventListener('input', updateQuiet);
+    }
+
+    const outreachStart = root.querySelector(`#${prefix}-outreach-active-start`);
+    const outreachEnd = root.querySelector(`#${prefix}-outreach-active-end`);
+    if (outreachStart && outreachEnd) {
+        const updateOutreach = () => _refreshLocalScheduleHourHints(root, prefix);
+        outreachStart.addEventListener('input', updateOutreach);
+        outreachEnd.addEventListener('input', updateOutreach);
+    }
+
+    root.querySelectorAll(`[data-local-hour]`).forEach((el) => {
+        if (el === quietStart || el === quietEnd || el === outreachStart || el === outreachEnd) return;
+        const update = () => _refreshLocalScheduleHourHints(root, prefix);
+        el.addEventListener('input', update);
+        el.addEventListener('change', update);
+    });
 }
 
 
@@ -1145,25 +1241,47 @@ function _wireAppendToggle(root, prefix) {
 
 
 async function _loadImageSettings(container) {
-    // Fetch Sapphire's LLM providers to populate the dropdown.
+    // Fetch Sapphire's LLM providers to populate provider dropdowns.
     if (!_LLM_PROVIDERS) {
         try {
             const res = await fetch('/api/llm/providers');
             if (res.ok) _LLM_PROVIDERS = await res.json();
         } catch (_) {}
     }
-    const providerKeys = ['image-provider', 'gif-query-provider'];
-    for (const key of providerKeys) {
-        const sel = container.querySelector(`#dc-g-${key}`);
-        if (sel && _LLM_PROVIDERS && Array.isArray(_LLM_PROVIDERS.providers)) {
-            const current = sel.value;
-            const opts = [{ value: '', label: '— Select provider —' }];
-            for (const prov of _LLM_PROVIDERS.providers) {
-                opts.push({ value: prov.key || prov.display_name || '', label: prov.display_name || prov.key || '' });
-            }
-            sel.innerHTML = opts.map(o => `<option value="${_esc(o.value)}">${_esc(o.label)}</option>`).join('');
-            sel.value = current;
+    _refreshLlmProviderDropdowns(container, 'dc-g');
+}
+
+
+function _llmProviderOptionsHtml() {
+    const providerOptions = [{ value: '', label: '— Select provider —' }];
+    if (_LLM_PROVIDERS && Array.isArray(_LLM_PROVIDERS.providers)) {
+        for (const prov of _LLM_PROVIDERS.providers) {
+            providerOptions.push({
+                value: prov.key || prov.display_name || '',
+                label: prov.display_name || prov.key || '',
+            });
         }
+    }
+    return providerOptions.map(o =>
+        `<option value="${_esc(o.value)}">${_esc(o.label)}</option>`
+    ).join('');
+}
+
+
+function _refreshLlmProviderDropdowns(root, prefix) {
+    const keys = [
+        'image-provider',
+        'gif-query-provider',
+        'greeting-provider',
+        'outreach-provider',
+        'sleep-provider',
+    ];
+    for (const key of keys) {
+        const sel = root.querySelector(`#${prefix}-${key}`);
+        if (!sel || !_LLM_PROVIDERS || !Array.isArray(_LLM_PROVIDERS.providers)) continue;
+        const current = sel.value;
+        sel.innerHTML = _llmProviderOptionsHtml();
+        if (current) sel.value = current;
     }
 }
 
@@ -1171,16 +1289,7 @@ function _renderImageSettings(root, prefix) {
     const container = root.querySelector('#dc-image-settings');
     if (!container) return;
 
-    // Build provider options — _LLM_PROVIDERS.providers is a list of {key, display_name, ...} objects
-    const providerOptions = [{ value: '', label: '— Select provider —' }];
-    if (_LLM_PROVIDERS && Array.isArray(_LLM_PROVIDERS.providers)) {
-        for (const prov of _LLM_PROVIDERS.providers) {
-            providerOptions.push({ value: prov.key || prov.display_name || '', label: prov.display_name || prov.key || '' });
-        }
-    }
-    const providerHtml = providerOptions.map(o =>
-        `<option value="${_esc(o.value)}">${_esc(o.label)}</option>`
-    ).join('');
+    const providerHtml = _llmProviderOptionsHtml();
 
     container.innerHTML = `
         <div class="dc-card" style="margin-top:6px">
@@ -1275,15 +1384,7 @@ function _renderGifSettings(root, prefix) {
     const container = root.querySelector('#dc-gif-settings');
     if (!container) return;
 
-    const providerOptions = [{ value: '', label: '— Select provider —' }];
-    if (_LLM_PROVIDERS && Array.isArray(_LLM_PROVIDERS.providers)) {
-        for (const prov of _LLM_PROVIDERS.providers) {
-            providerOptions.push({ value: prov.key || prov.display_name || '', label: prov.display_name || prov.key || '' });
-        }
-    }
-    const providerHtml = providerOptions.map(o =>
-        `<option value="${_esc(o.value)}">${_esc(o.label)}</option>`
-    ).join('');
+    const providerHtml = _llmProviderOptionsHtml();
 
     container.innerHTML = `
         <div class="dc-card" style="margin-top:6px">
@@ -1414,6 +1515,7 @@ function _renderGifSettings(root, prefix) {
 
 
 function _personalityFieldsHTML(prefix) {
+    const providerHtml = _llmProviderOptionsHtml();
     return `
         <div class="dc-card" style="margin-top:6px">
             <div class="dc-row">
@@ -1424,24 +1526,25 @@ function _personalityFieldsHTML(prefix) {
             </div>
             <div class="dc-row">
                 <div class="dc-row-label">
-                    <label>Quiet Hours (UTC)</label>
-                    <div class="dc-row-help">During quiet hours, random replies are suppressed.</div>
+                    <label>Quiet Hours (local)</label>
+                    <div class="dc-row-help">Schedule uses your timezone (<span id="${prefix}-local-tz-name">local</span>). Overnight window when random replies are suppressed.</div>
                 </div>
-                <div class="dc-row-control" style="display:flex;gap:8px;align-items:center">
+                <div class="dc-row-control" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                     <label class="dc-toggle">
                         <input type="checkbox" id="${prefix}-quiet-enabled">
                         <span class="dc-toggle-track"></span>
                         <span class="dc-toggle-thumb"></span>
                     </label>
-                    <input type="number" id="${prefix}-quiet-start" min="0" max="23" value="22" class="dc-input dc-input-sm" style="width:60px" title="Start hour">
+                    <input type="number" id="${prefix}-quiet-start" data-local-hour min="0" max="23" value="22" class="dc-input dc-input-sm" style="width:60px" title="Start hour (local)" aria-describedby="${prefix}-quiet-hours-utc">
                     <span>to</span>
-                    <input type="number" id="${prefix}-quiet-end" min="0" max="23" value="8" class="dc-input dc-input-sm" style="width:60px" title="End hour">
+                    <input type="number" id="${prefix}-quiet-end" data-local-hour min="0" max="23" value="8" class="dc-input dc-input-sm" style="width:60px" title="End hour (local)" aria-describedby="${prefix}-quiet-hours-utc">
                     <select id="${prefix}-quiet-mode" class="dc-input dc-input-sm">
                         <option value="reactions_only">Reactions only</option>
                         <option value="silent">Fully silent</option>
                     </select>
                 </div>
             </div>
+            <p id="${prefix}-quiet-hours-utc" class="dc-row-help" style="margin:-4px 0 8px 0"></p>
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label>Activity Decay</label>
@@ -1491,7 +1594,7 @@ function _personalityFieldsHTML(prefix) {
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label style="font-weight:600">Sleep Schedule</label>
-                    <div class="dc-row-help">At <strong>Sleep UTC Hour</strong> the bot posts a goodnight (random minute within that hour), then goes dormant. Direct @mentions are held until the <strong>Morning Greeting</strong> wake hour; only the newest buffered mentions get replies (limit below).</div>
+                    <div class="dc-row-help">At <strong>sleep hour (local)</strong> the bot posts a goodnight (random minute within that hour), then goes dormant. Direct @mentions are held until the <strong>morning greeting</strong> hour; only the newest buffered mentions get replies (limit below).</div>
                 </div>
                 <div class="dc-row-control">
                     <label class="dc-toggle">
@@ -1502,11 +1605,12 @@ function _personalityFieldsHTML(prefix) {
                 </div>
             </div>
             <div class="dc-row">
-                <div class="dc-row-label"><label>Sleep UTC Hour</label></div>
+                <div class="dc-row-label"><label>Sleep Hour (local)</label></div>
                 <div class="dc-row-control">
-                    <input type="number" id="${prefix}-sleep-hour" min="0" max="23" value="22" class="dc-input dc-input-sm">
+                    <input type="number" id="${prefix}-sleep-hour" data-local-hour min="0" max="23" value="22" class="dc-input dc-input-sm" aria-describedby="${prefix}-sleep-hour-utc">
                 </div>
             </div>
+            <p id="${prefix}-sleep-hour-utc" class="dc-row-help" style="margin:-4px 0 8px 0"></p>
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label>Buffered @Mention Replies</label>
@@ -1514,6 +1618,46 @@ function _personalityFieldsHTML(prefix) {
                 </div>
                 <div class="dc-row-control">
                     <input type="number" id="${prefix}-sleep-buffer-max" min="1" max="10" value="3" class="dc-input dc-input-sm" style="width:60px">
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label style="font-weight:600">Forced Wake</label>
+                    <div class="dc-row-help">If enough @mentions arrive while asleep, the bot wakes briefly, replies (and grumbles), then goes back to sleep.</div>
+                </div>
+                <div class="dc-row-control">
+                    <label class="dc-toggle">
+                        <input type="checkbox" id="${prefix}-sleep-forced-wake-enabled">
+                        <span class="dc-toggle-track"></span>
+                        <span class="dc-toggle-thumb"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>@Mentions to Wake</label>
+                    <div class="dc-row-help">Number of direct @mentions required within the window below.</div>
+                </div>
+                <div class="dc-row-control">
+                    <input type="number" id="${prefix}-sleep-forced-wake-count" min="2" max="20" value="3" class="dc-input dc-input-sm" style="width:60px">
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>Wake Window (minutes)</label>
+                    <div class="dc-row-help">Rolling window for counting @mentions toward the threshold.</div>
+                </div>
+                <div class="dc-row-control">
+                    <input type="number" id="${prefix}-sleep-forced-wake-window" min="1" max="120" value="15" class="dc-input dc-input-sm" style="width:60px">
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>Stay Awake (minutes)</label>
+                    <div class="dc-row-help">How long @mentions get live replies before the bot goes dormant again.</div>
+                </div>
+                <div class="dc-row-control">
+                    <input type="number" id="${prefix}-sleep-forced-wake-duration" min="5" max="180" value="30" class="dc-input dc-input-sm" style="width:60px">
                 </div>
             </div>
             <div class="dc-row">
@@ -1554,8 +1698,8 @@ function _personalityFieldsHTML(prefix) {
                     <label>Goodnight Model (optional)</label>
                     <div class="dc-row-help">Leave blank to use greeting model or default chat provider.</div>
                 </div>
-                <div class="dc-row-control" style="display:flex;gap:6px">
-                    <input type="text" id="${prefix}-sleep-provider" class="dc-input" placeholder="provider" style="width:100px">
+                <div class="dc-row-control" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                    <select id="${prefix}-sleep-provider" class="dc-select dc-input-md">${providerHtml}</select>
                     <input type="text" id="${prefix}-sleep-model" class="dc-input" placeholder="model name">
                     <input type="number" id="${prefix}-sleep-max-tokens" min="40" max="500" value="180" class="dc-input dc-input-sm" style="width:70px">
                 </div>
@@ -1566,7 +1710,7 @@ function _personalityFieldsHTML(prefix) {
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label style="font-weight:600">Morning Greeting</label>
-                    <div class="dc-row-help">Scheduled via Sapphire continuity (hourly cron checks UTC hour). Use <strong>Send test greeting</strong> to try it now.</div>
+                    <div class="dc-row-help">Scheduled via Sapphire continuity (hourly cron). Use <strong>Send test greeting</strong> to try it now. Times are in your local timezone.</div>
                 </div>
                 <div class="dc-row-control">
                     <label class="dc-toggle">
@@ -1577,11 +1721,12 @@ function _personalityFieldsHTML(prefix) {
                 </div>
             </div>
             <div class="dc-row">
-                <div class="dc-row-label"><label>UTC Hour</label></div>
+                <div class="dc-row-label"><label>Wake Hour (local)</label></div>
                 <div class="dc-row-control">
-                    <input type="number" id="${prefix}-greeting-hour" min="0" max="23" value="9" class="dc-input dc-input-sm">
+                    <input type="number" id="${prefix}-greeting-hour" data-local-hour min="0" max="23" value="9" class="dc-input dc-input-sm" aria-describedby="${prefix}-greeting-hour-utc">
                 </div>
             </div>
+            <p id="${prefix}-greeting-hour-utc" class="dc-row-help" style="margin:-4px 0 8px 0"></p>
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label>AI-Generated Greeting</label>
@@ -1610,8 +1755,8 @@ function _personalityFieldsHTML(prefix) {
                     <label>Greeting Model (optional)</label>
                     <div class="dc-row-help">Leave blank to use the default chat provider. Otherwise set provider + model name.</div>
                 </div>
-                <div class="dc-row-control" style="display:flex;gap:6px">
-                    <input type="text" id="${prefix}-greeting-provider" class="dc-input" placeholder="provider" style="width:100px">
+                <div class="dc-row-control" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                    <select id="${prefix}-greeting-provider" class="dc-select dc-input-md">${providerHtml}</select>
                     <input type="text" id="${prefix}-greeting-model" class="dc-input" placeholder="model name">
                     <input type="number" id="${prefix}-greeting-max-tokens" min="40" max="500" value="180" class="dc-input dc-input-sm" style="width:70px" title="Max tokens">
                 </div>
@@ -1643,7 +1788,7 @@ function _personalityFieldsHTML(prefix) {
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label style="font-weight:600">Quiet Channel Outreach</label>
-                    <div class="dc-row-help">When a channel goes quiet, the bot may casually restart conversation (checked every 15 min). Channels that get the morning greeting share the same cooldown — a greeting counts as outreach. Outreach is suppressed for 2 hours before the greeting UTC hour on those channels.</div>
+                    <div class="dc-row-help">When a channel goes quiet, the bot may casually restart conversation (checked every 15 min). Outreach uses your local timezone for active hours.</div>
                 </div>
                 <div class="dc-row-control">
                     <label class="dc-toggle">
@@ -1682,15 +1827,16 @@ function _personalityFieldsHTML(prefix) {
             </div>
             <div class="dc-row">
                 <div class="dc-row-label">
-                    <label>Active Hours (UTC)</label>
-                    <div class="dc-row-help">Only outreach between these hours. Respects global Quiet Hours too.</div>
+                    <label>Active Hours (local)</label>
+                    <div class="dc-row-help">Only outreach between these local hours. Respects global Quiet Hours too.</div>
                 </div>
                 <div class="dc-row-control" style="display:flex;gap:6px;align-items:center">
-                    <input type="number" id="${prefix}-outreach-active-start" min="0" max="23" value="10" class="dc-input dc-input-sm" style="width:60px">
+                    <input type="number" id="${prefix}-outreach-active-start" data-local-hour min="0" max="23" value="10" class="dc-input dc-input-sm" style="width:60px" aria-describedby="${prefix}-outreach-active-utc">
                     <span class="dc-row-help" style="margin:0">to</span>
-                    <input type="number" id="${prefix}-outreach-active-end" min="0" max="23" value="21" class="dc-input dc-input-sm" style="width:60px">
+                    <input type="number" id="${prefix}-outreach-active-end" data-local-hour min="0" max="23" value="21" class="dc-input dc-input-sm" style="width:60px" aria-describedby="${prefix}-outreach-active-utc">
                 </div>
             </div>
+            <p id="${prefix}-outreach-active-utc" class="dc-row-help" style="margin:-4px 0 8px 0"></p>
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label>AI-Generated Message</label>
@@ -1732,8 +1878,8 @@ function _personalityFieldsHTML(prefix) {
                     <label>Outreach Model (optional)</label>
                     <div class="dc-row-help">Leave blank to use the default chat provider.</div>
                 </div>
-                <div class="dc-row-control" style="display:flex;gap:6px">
-                    <input type="text" id="${prefix}-outreach-provider" class="dc-input" placeholder="provider" style="width:100px">
+                <div class="dc-row-control" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                    <select id="${prefix}-outreach-provider" class="dc-select dc-input-md">${providerHtml}</select>
                     <input type="text" id="${prefix}-outreach-model" class="dc-input" placeholder="model name">
                     <input type="number" id="${prefix}-outreach-max-tokens" min="40" max="500" value="180" class="dc-input dc-input-sm" style="width:70px" title="Max tokens">
                 </div>
@@ -2284,15 +2430,19 @@ function _populatePersonalityFields(root, prefix, data, dmData) {
     const v  = (id, val) => { const e = root.querySelector(`#${id}`); if (e) e.value = val; };
     const c  = (id, val) => { const e = root.querySelector(`#${id}`); if (e) e.checked = !!val; };
     c(`${prefix}-quiet-enabled`, data.quiet_hours_enabled);
-    v(`${prefix}-quiet-start`, data.quiet_hours_start ?? 22);
-    v(`${prefix}-quiet-end`, data.quiet_hours_end ?? 8);
+    v(`${prefix}-quiet-start`, _utcHourToLocal(data.quiet_hours_start ?? 22));
+    v(`${prefix}-quiet-end`, _utcHourToLocal(data.quiet_hours_end ?? 8));
     v(`${prefix}-quiet-mode`, data.quiet_hours_mode ?? 'reactions_only');
     c(`${prefix}-activity-decay`, data.activity_decay_enabled);
     v(`${prefix}-activity-threshold`, data.activity_decay_threshold ?? 10);
     v(`${prefix}-activity-multiplier`, data.activity_decay_multiplier ?? 0.5);
     c(`${prefix}-sleep-enabled`, data.sleep_schedule_enabled);
-    v(`${prefix}-sleep-hour`, data.sleep_utc_hour ?? 22);
+    v(`${prefix}-sleep-hour`, _utcHourToLocal(data.sleep_utc_hour ?? 22));
     v(`${prefix}-sleep-buffer-max`, data.sleep_buffered_reply_max ?? 3);
+    c(`${prefix}-sleep-forced-wake-enabled`, data.sleep_forced_wake_enabled);
+    v(`${prefix}-sleep-forced-wake-count`, data.sleep_forced_wake_mention_count ?? 3);
+    v(`${prefix}-sleep-forced-wake-window`, data.sleep_forced_wake_window_minutes ?? 15);
+    v(`${prefix}-sleep-forced-wake-duration`, data.sleep_forced_wake_duration_minutes ?? 30);
     c(`${prefix}-sleep-use-greeting-targets`, data.sleep_use_greeting_targets !== false);
     c(`${prefix}-sleep-use-llm`, data.sleep_use_llm !== false);
     v(`${prefix}-sleep-message`, data.sleep_message ?? '');
@@ -2305,7 +2455,7 @@ function _populatePersonalityFields(root, prefix, data, dmData) {
     v(`${prefix}-dm-cooldown`, dmData?.cooldown_seconds ?? 60);
     c(`${prefix}-greeting-enabled`, data.greeting_enabled);
     c(`${prefix}-greeting-use-llm`, data.greeting_use_llm !== false);
-    v(`${prefix}-greeting-hour`, data.greeting_utc_hour ?? 9);
+    v(`${prefix}-greeting-hour`, _utcHourToLocal(data.greeting_utc_hour ?? 9));
     v(`${prefix}-greeting-message`, data.greeting_message ?? '');
     v(`${prefix}-greeting-fallback`, data.greeting_fallback ?? 'Good morning, everyone! ☀️');
     v(`${prefix}-greeting-provider`, data.greeting_model_provider ?? '');
@@ -2316,8 +2466,8 @@ function _populatePersonalityFields(root, prefix, data, dmData) {
     v(`${prefix}-outreach-quiet-minutes`, data.outreach_quiet_minutes ?? 240);
     v(`${prefix}-outreach-cooldown-hours`, data.outreach_cooldown_hours ?? 8);
     v(`${prefix}-outreach-skip-chance`, data.outreach_skip_chance ?? 25);
-    v(`${prefix}-outreach-active-start`, data.outreach_active_start ?? 10);
-    v(`${prefix}-outreach-active-end`, data.outreach_active_end ?? 21);
+    v(`${prefix}-outreach-active-start`, _utcHourToLocal(data.outreach_active_start ?? 10));
+    v(`${prefix}-outreach-active-end`, _utcHourToLocal(data.outreach_active_end ?? 21));
     c(`${prefix}-outreach-use-llm`, data.outreach_use_llm !== false);
     c(`${prefix}-outreach-typing`, data.outreach_typing_indicator !== false);
     v(`${prefix}-outreach-message`, data.outreach_message ?? '');
@@ -2344,15 +2494,19 @@ function _readPersonalityFields(root, prefix) {
     const outreachTargets = [..._getOutreachSet(prefix)];
     return {
         quiet_hours_enabled: b(`${prefix}-quiet-enabled`),
-        quiet_hours_start: i(`${prefix}-quiet-start`),
-        quiet_hours_end: i(`${prefix}-quiet-end`),
+        quiet_hours_start: _localHourToUtc(i(`${prefix}-quiet-start`)),
+        quiet_hours_end: _localHourToUtc(i(`${prefix}-quiet-end`)),
         quiet_hours_mode: v(`${prefix}-quiet-mode`) || 'reactions_only',
         activity_decay_enabled: b(`${prefix}-activity-decay`),
         activity_decay_threshold: i(`${prefix}-activity-threshold`),
         activity_decay_multiplier: parseFloat(v(`${prefix}-activity-multiplier`) || '0.5'),
         sleep_schedule_enabled: b(`${prefix}-sleep-enabled`),
-        sleep_utc_hour: i(`${prefix}-sleep-hour`),
+        sleep_utc_hour: _localHourToUtc(i(`${prefix}-sleep-hour`)),
         sleep_buffered_reply_max: i(`${prefix}-sleep-buffer-max`),
+        sleep_forced_wake_enabled: b(`${prefix}-sleep-forced-wake-enabled`),
+        sleep_forced_wake_mention_count: i(`${prefix}-sleep-forced-wake-count`),
+        sleep_forced_wake_window_minutes: i(`${prefix}-sleep-forced-wake-window`),
+        sleep_forced_wake_duration_minutes: i(`${prefix}-sleep-forced-wake-duration`),
         sleep_use_greeting_targets: b(`${prefix}-sleep-use-greeting-targets`),
         sleep_use_llm: b(`${prefix}-sleep-use-llm`),
         sleep_message: v(`${prefix}-sleep-message`),
@@ -2362,7 +2516,7 @@ function _readPersonalityFields(root, prefix) {
         sleep_max_tokens: i(`${prefix}-sleep-max-tokens`),
         greeting_enabled: b(`${prefix}-greeting-enabled`),
         greeting_use_llm: b(`${prefix}-greeting-use-llm`),
-        greeting_utc_hour: i(`${prefix}-greeting-hour`),
+        greeting_utc_hour: _localHourToUtc(i(`${prefix}-greeting-hour`)),
         greeting_message: v(`${prefix}-greeting-message`),
         greeting_fallback: v(`${prefix}-greeting-fallback`),
         greeting_model_provider: v(`${prefix}-greeting-provider`),
@@ -2373,8 +2527,8 @@ function _readPersonalityFields(root, prefix) {
         outreach_quiet_minutes: i(`${prefix}-outreach-quiet-minutes`),
         outreach_cooldown_hours: i(`${prefix}-outreach-cooldown-hours`),
         outreach_skip_chance: i(`${prefix}-outreach-skip-chance`),
-        outreach_active_start: i(`${prefix}-outreach-active-start`),
-        outreach_active_end: i(`${prefix}-outreach-active-end`),
+        outreach_active_start: _localHourToUtc(i(`${prefix}-outreach-active-start`)),
+        outreach_active_end: _localHourToUtc(i(`${prefix}-outreach-active-end`)),
         outreach_use_llm: b(`${prefix}-outreach-use-llm`),
         outreach_typing_indicator: b(`${prefix}-outreach-typing`),
         outreach_message: v(`${prefix}-outreach-message`),
@@ -2620,6 +2774,7 @@ async function _loadGlobalSettings(container) {
         }
         _populateFields(container, 'dc-g', { ...data.global, ...data });
         _populatePersonalityFields(container, 'dc-g', { ...data.global, ...data }, data.dm ?? {});
+        _refreshLocalScheduleHourHints(container, 'dc-g');
         _loadGreetingPicker(container, 'dc-g');
         _loadOutreachPicker(container, 'dc-g');
     } catch (_) {}

@@ -21,14 +21,15 @@ Open settings in Sapphire at **Settings → Leona Discord** (or `/settings` with
 11. [GIF follow-ups](#gif-follow-ups)
 12. [Presence, quiet hours & activity decay](#presence-quiet-hours--activity-decay)
 13. [Morning greeting](#morning-greeting)
-14. [Quiet channel outreach](#quiet-channel-outreach)
-15. [Direct messages](#direct-messages)
-16. [Slash commands](#slash-commands)
-17. [Safety](#safety)
-18. [Debug traces](#debug-traces)
-19. [Schedule tasks & connectivity](#schedule-tasks--connectivity)
-20. [LLM inline tags](#llm-inline-tags)
-21. [Discord tools (for the LLM)](#discord-tools-for-the-llm)
+14. [Sleep schedule](#sleep-schedule)
+15. [Quiet channel outreach](#quiet-channel-outreach)
+16. [Direct messages](#direct-messages)
+17. [Slash commands](#slash-commands)
+18. [Safety](#safety)
+19. [Debug traces](#debug-traces)
+20. [Schedule tasks & connectivity](#schedule-tasks--connectivity)
+21. [LLM inline tags](#llm-inline-tags)
+22. [Discord tools (for the LLM)](#discord-tools-for-the-llm)
 
 ---
 
@@ -154,7 +155,11 @@ Core personality and reply behavior.
 
 ### Presence
 
-See [Presence, quiet hours & activity decay](#presence-quiet-hours--activity-decay), [Morning greeting](#morning-greeting), [Quiet channel outreach](#quiet-channel-outreach), [Direct messages](#direct-messages), and [Safety](#safety).
+See [Presence, quiet hours & activity decay](#presence-quiet-hours--activity-decay), [Morning greeting](#morning-greeting), [Sleep schedule](#sleep-schedule), [Quiet channel outreach](#quiet-channel-outreach), [Direct messages](#direct-messages), and [Safety](#safety).
+
+All **hour-based** fields in this tab (Quiet Hours, Sleep, Wake, Outreach active hours) use **your browser’s local timezone**. Each field shows a **Saved as … UTC** hint on save/load so you can verify what the server stored.
+
+Proactive features (Greeting, Outreach, Goodnight) use **provider dropdowns** populated from Sapphire’s LLM provider list — same source as Image Understanding.
 
 ### Advanced
 
@@ -188,11 +193,12 @@ For each incoming message the bot evaluates gates in order (visible in debug tra
 
 1. **Safety** — permissions, rate limits, content blocklist
 2. **User access** — denylist, allowlist, ignore bots
-3. **Reply mode** — never / reactions_only / mentions_only / default
-4. **Triggers** — @mention, role, name match, keyword
-5. **Cooldown** — if not a hard trigger
-6. **Chance roll** — human_response_chance or bot_response_chance
-7. **Read-only react** — ~5% of organic messages may get only a reaction, no reply
+3. **Sleep schedule** — if channel is asleep: non-@mentions are dropped; @mentions are buffered unless [forced wake](#sleep-schedule) threshold is met
+4. **Reply mode** — never / reactions_only / mentions_only / default
+5. **Triggers** — @mention, role, name match, keyword
+6. **Cooldown** — if not a hard trigger
+7. **Chance roll** — human_response_chance or bot_response_chance
+8. **Read-only react** — ~5% of organic messages may get only a reaction, no reply
 
 **Hard triggers** (usually queue a reply if mode allows): direct @mention of the bot, always-respond roles, name match, keyword match.
 
@@ -272,6 +278,8 @@ When the bot doesn't send a text reply, it may still react if reactions are enab
 
 During **quiet hours** (reactions_only mode), reactions stay on; in **fully silent** mode they are off.
 
+During **sleep schedule** (channel marked asleep), reactions and random replies are off; @mentions are buffered or handled by **Forced Wake**.
+
 ---
 
 ## Image understanding
@@ -306,9 +314,11 @@ After a successful **text auto-reply**, the bot may send a GIF as a second messa
 
 ## Presence, quiet hours & activity decay
 
-### Quiet hours (UTC)
+**Schedule times in the UI** are shown in **your browser's local timezone** (labeled next to each field). Values are converted to UTC when saved; the server still runs schedules on UTC. Each hour field shows a **Saved as … UTC** hint so you can verify what was stored.
 
-**Off by default.** When enabled, defines a UTC time window (default **22:00 → 08:00**) and a mode.
+### Quiet hours (local)
+
+**Off by default.** When enabled, defines a local-time window (default **22:00 → 08:00** in your timezone) and a mode.
 
 The bot is **not offline** during quiet hours — it stays connected. Discord presence switches to **idle** (yellow moon) instead of online.
 
@@ -323,9 +333,9 @@ The bot is **not offline** during quiet hours — it stays connected. Discord pr
 | Morning greeting | Skipped | Skipped |
 | Quiet outreach | Skipped | Skipped |
 
-Quiet hours are a **"don't butt into the conversation"** schedule, not a full shutdown. Someone @mentioning the bot at 3 AM UTC can still get a reply.
+Quiet hours are a **"don't butt into the conversation"** schedule, not a full shutdown. Someone @mentioning the bot during quiet hours can still get a reply.
 
-The window uses **UTC** and wraps overnight (22→8 means 22:00 through 07:59 UTC).
+The window wraps overnight (22→8 means 22:00 through 07:59 in the configured timezone, stored as UTC on the server).
 
 ### Activity decay
 
@@ -348,22 +358,22 @@ Scheduled proactive good-morning messages to selected channels.
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | Enabled | Off | Master toggle |
-| UTC hour | 9 | Posted once per day when hourly cron hits this hour |
+| Wake hour (local) | 9 | Posted once per day when hourly cron hits this hour (stored as UTC) |
 | AI-Generated Greeting | On | LLM writes fresh text from instructions |
 | Greeting Instructions | (see UI) | Prompt to the LLM — **not** posted verbatim |
 | Fallback Message | "Good morning, everyone! ☀️" | Used if LLM fails |
-| Model provider / name | — | Optional dedicated model |
+| Model provider / name | — | Optional dedicated model (provider is a dropdown) |
 | Greeting Channels | — | Picker or `account:guild_id:channel_id` lines |
 
-**Schedule:** `morning_greeting` cron `0 * * * *` (every hour; posts only at configured UTC hour).
+**Schedule:** `morning_greeting` cron `0 * * * *` (every hour; posts only at the configured hour).
 
-**Test:** **Send test greeting** bypasses enabled toggle and UTC hour (uses current form values).
+**Test:** **Send test greeting** bypasses enabled toggle and scheduled hour (uses current form values).
 
 **Self-greeting fix:** The LLM is told it is posting *as* the bot. Bot history lines appear as `You:` in context. Accidental `Morning, Remmi` patterns are stripped before send.
 
 **Quiet hours:** Greetings are skipped during quiet hours.
 
-**Outreach coordination:** A successful greeting records outreach cooldown on that channel. Outreach skips greeting-target channels for 2 hours before the greeting UTC hour.
+**Outreach coordination:** A successful greeting records outreach cooldown on that channel. Outreach skips greeting-target channels for 2 hours before the greeting wake hour.
 
 **Sleep schedule:** When enabled, wake hour also drains buffered overnight @mentions (see below).
 
@@ -376,17 +386,28 @@ Full sleep/wake cycle — stronger than Quiet Hours.
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | Sleep Schedule | Off | Master toggle |
-| Sleep UTC Hour | 22 | Goodnight at a **random minute** within this hour |
+| Sleep hour (local) | 22 | Goodnight at a **random minute** within this hour |
 | Buffered @Mention Replies | 3 | Max replies after wake (newest first) |
+| Forced Wake | Off | Briefly rouse on enough @mentions while asleep |
+| @Mentions to Wake | 3 | Threshold count within the window |
+| Wake Window | 15 min | Rolling window for counting @mentions |
+| Stay Awake | 30 min | Live @mention replies before going dormant again |
 | Use Greeting Channels | On | Same channels as Morning Greeting |
+| AI-Generated Goodnight | On | LLM writes goodnight from instructions |
+| Goodnight Instructions | (see UI) | Prompt to the LLM — **not** posted verbatim |
+| Goodnight Fallback | "Good night, everyone! 🌙" | Used if LLM fails |
+| Goodnight Model | — | Optional dedicated model (provider dropdown) |
 
 ### Flow
 
 1. **Sleep hour:** `sleep_goodnight` cron (every 15 min) picks a random minute 0–59 per channel per night. After that minute, the bot posts **goodnight** and marks the channel **asleep**.
-2. **While asleep:** No replies, reactions, or outreach. **Direct @mentions only** are buffered in SQLite.
-3. **Wake hour** (Morning Greeting UTC hour): Good morning posts → channel wakes → up to **N** newest buffered @mentions get delayed LLM replies (25–75 s apart). Older buffered mentions are skipped.
+2. **While asleep:** No replies, reactions, or outreach. **Direct @mentions** are buffered in SQLite — unless **Forced Wake** triggers (below).
+3. **Forced wake (optional):** If **N** direct @mentions arrive within **M** minutes, the bot wakes temporarily: it replies to @mentions with a grumpy “you woke me up” tone (via an injected LLM hint), then goes dormant again after **Stay Awake** minutes. Mentions answered during forced wake are marked processed and are **not** replayed at morning greeting.
+4. **Wake hour** (Morning Greeting local hour): Good morning posts → channel wakes → up to **N** newest buffered @mentions get delayed LLM replies (25–75 s apart). Older buffered mentions are skipped.
 
-**Presence:** Idle with activity `sleeping` while any configured channel is asleep.
+**While asleep (including forced-wake window):** outreach is suppressed; presence stays **idle** with activity `sleeping` for any channel still marked asleep in SQLite.
+
+**Schedule:** `sleep_goodnight` cron `*/15 * * * *` (every 15 minutes; posts goodnight once per channel per night).
 
 Enable **Morning Greeting** (or Sleep Schedule alone) so wake hour runs.
 
@@ -402,9 +423,10 @@ Proactive conversation starters when channels go quiet.
 | Quiet after | 240 min | No human messages this long |
 | Cooldown | 8 h | Min time between outreach in same channel |
 | Skip chance | 25% | Random skip even when eligible |
-| Active hours | 10–21 UTC | Outreach only in this window |
+| Active hours | 10–21 (local) | Outreach only in this window |
 | AI-generated | On | LLM writes opener from instructions |
 | Typing indicator | On | Brief typing before send |
+| Outreach Model | — | Optional dedicated model (provider dropdown) |
 | Outreach Channels | — | Same picker format as greetings |
 
 **Schedule:** `quiet_outreach` cron `*/15 * * * *` (every 15 minutes).
@@ -415,6 +437,7 @@ Proactive conversation starters when channels go quiet.
 - Last human message older than quiet threshold
 - Not in outreach cooldown
 - Not in quiet hours
+- Channel not asleep (sleep schedule)
 - Not in greeting window (for greeting-target channels)
 - Passes skip-chance roll
 
@@ -470,7 +493,9 @@ Failed safety checks appear in debug traces.
 
 Enable **Server-side Debug Logging** (Debug tab).
 
-Each incoming message can log a trace with gate names: `reply_mode`, `mentioned`, `name_match`, `cooldown`, `human_response_chance`, `safety`, etc.
+Each incoming message can log a trace with gate names: `safety`, `user_access`, `sleep_buffer`, `sleep_forced_wake`, `reply_mode`, `mentioned`, `name_match`, `cooldown`, `human_response_chance`, etc.
+
+Sleep-related outcomes include `sleep_dormant`, `sleep_buffered_mention`, and `queued_forced_wake_reply`.
 
 Use this when the bot "should have replied" but didn't — the trace shows which gate stopped it.
 
@@ -497,7 +522,7 @@ These plugin crons run via Sapphire's continuity scheduler (bot must be online):
 
 | Cron | Handler | Purpose |
 |------|---------|---------|
-| `0 * * * *` | `morning_greeting.py` | Hourly check for greeting UTC hour |
+| `0 * * * *` | `morning_greeting.py` | Hourly check for greeting wake hour |
 | `*/15 * * * *` | `quiet_outreach.py` | Quiet-channel outreach sweep |
 | `*/15 * * * *` | `sleep_goodnight.py` | Goodnight + enter sleep state |
 
@@ -545,8 +570,10 @@ If a tool already sent a message for an event, the auto-reply handler skips dupl
 - **Start with Helper preset** on a test channel, then loosen chances.
 - Use **debug traces** when tuning gates — they show the exact failure reason.
 - **Quiet hours** = lurk mode, not offline. Use **Reply Mode → Never** for hard silence (except @mentions still work unless you also deny via other gates).
+- **Sleep schedule** is stronger than quiet hours — while asleep the bot ignores random traffic; only @mentions are buffered (or answered during **Forced Wake**).
+- **Local time vs UTC:** set hours in your timezone in the UI; verify with the **Saved as … UTC** hint (e.g. 1 AM Melbourne ≈ 15:00 UTC in winter).
 - **LLM Max History** and **Reply Context Limit** affect token usage globally — lower them on busy servers (try 32 history, 32000 context for Discord toolsets).
-- **Send test greeting** is the fastest way to verify proactive LLM + channel picker without waiting for UTC hour.
+- **Send test greeting** is the fastest way to verify proactive LLM + channel picker without waiting for the scheduled wake hour.
 
 ---
 

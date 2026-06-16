@@ -97,6 +97,7 @@ def init_db():
                 sleep_date TEXT NOT NULL DEFAULT '',
                 scheduled_sleep_minute INTEGER NOT NULL DEFAULT -1,
                 goodnight_sent INTEGER NOT NULL DEFAULT 0,
+                forced_wake_until REAL NOT NULL DEFAULT 0,
                 PRIMARY KEY (account, channel_id)
             );
 
@@ -117,9 +118,18 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_sleep_buffer_channel
                 ON sleep_mention_buffer(account, channel_id, processed, created_at DESC);
         """)
+        _migrate_sleep_state(conn)
         conn.commit()
         _conn = conn
         logger.info(f"[LEONA-DISCORD] Memory store opened at {path}")
+
+
+def _migrate_sleep_state(conn):
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sleep_state)").fetchall()}
+    if "forced_wake_until" not in cols:
+        conn.execute(
+            "ALTER TABLE sleep_state ADD COLUMN forced_wake_until REAL NOT NULL DEFAULT 0"
+        )
 
 
 def _db() -> sqlite3.Connection:
@@ -250,7 +260,7 @@ def get_sleep_state(account: str, channel_id: str) -> dict:
         conn = _db()
         row = conn.execute(
             """
-            SELECT is_asleep, sleep_date, scheduled_sleep_minute, goodnight_sent
+            SELECT is_asleep, sleep_date, scheduled_sleep_minute, goodnight_sent, forced_wake_until
             FROM sleep_state WHERE account = ? AND channel_id = ?
             """,
             (account, channel_id),
@@ -261,12 +271,14 @@ def get_sleep_state(account: str, channel_id: str) -> dict:
             "sleep_date": "",
             "scheduled_sleep_minute": -1,
             "goodnight_sent": False,
+            "forced_wake_until": 0.0,
         }
     return {
         "is_asleep": bool(row["is_asleep"]),
         "sleep_date": row["sleep_date"] or "",
         "scheduled_sleep_minute": int(row["scheduled_sleep_minute"]),
         "goodnight_sent": bool(row["goodnight_sent"]),
+        "forced_wake_until": float(row["forced_wake_until"] or 0),
     }
 
 
@@ -278,6 +290,7 @@ def upsert_sleep_state(
     sleep_date: str = None,
     scheduled_sleep_minute: int = None,
     goodnight_sent: bool = None,
+    forced_wake_until: float = None,
 ):
     current = get_sleep_state(account, channel_id)
     if is_asleep is not None:
@@ -288,18 +301,22 @@ def upsert_sleep_state(
         current["scheduled_sleep_minute"] = scheduled_sleep_minute
     if goodnight_sent is not None:
         current["goodnight_sent"] = goodnight_sent
+    if forced_wake_until is not None:
+        current["forced_wake_until"] = float(forced_wake_until)
     with _lock:
         conn = _db()
         conn.execute(
             """
             INSERT INTO sleep_state
-                (account, channel_id, is_asleep, sleep_date, scheduled_sleep_minute, goodnight_sent)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (account, channel_id, is_asleep, sleep_date, scheduled_sleep_minute,
+                 goodnight_sent, forced_wake_until)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account, channel_id) DO UPDATE SET
                 is_asleep = excluded.is_asleep,
                 sleep_date = excluded.sleep_date,
                 scheduled_sleep_minute = excluded.scheduled_sleep_minute,
-                goodnight_sent = excluded.goodnight_sent
+                goodnight_sent = excluded.goodnight_sent,
+                forced_wake_until = excluded.forced_wake_until
             """,
             (
                 account,
@@ -308,6 +325,7 @@ def upsert_sleep_state(
                 current["sleep_date"],
                 current["scheduled_sleep_minute"],
                 1 if current["goodnight_sent"] else 0,
+                current["forced_wake_until"],
             ),
         )
         conn.commit()
@@ -447,6 +465,38 @@ def count_pending_sleep_buffer(account: str, channel_id: str) -> int:
             (account, channel_id),
         ).fetchone()
     return int(row["c"]) if row else 0
+
+
+def count_sleep_mentions_in_window(
+    account: str,
+    channel_id: str,
+    window_minutes: int,
+) -> int:
+    """Count buffered @mentions in the rolling window (for forced-wake threshold)."""
+    since = time.time() - max(1, window_minutes) * 60
+    with _lock:
+        conn = _db()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS c FROM sleep_mention_buffer
+            WHERE account = ? AND channel_id = ? AND created_at >= ?
+            """,
+            (account, channel_id, since),
+        ).fetchone()
+    return int(row["c"]) if row else 0
+
+
+def mark_sleep_buffer_message_processed(account: str, channel_id: str, message_id: str):
+    with _lock:
+        conn = _db()
+        conn.execute(
+            """
+            UPDATE sleep_mention_buffer SET processed = 1
+            WHERE account = ? AND channel_id = ? AND message_id = ? AND processed = 0
+            """,
+            (account, channel_id, message_id),
+        )
+        conn.commit()
 
 
 def get_recent_messages(account: str, channel_id: str, limit: int = RECENT_LIMIT) -> list:

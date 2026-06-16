@@ -854,6 +854,61 @@ class TestSleepSchedule:
         assert not is_channel_asleep("a", "c1")
 
 
+class TestForcedWake:
+    def test_threshold_triggers_wake_hint(self, monkeypatch):
+        import time as time_mod
+        from plugins.leona_discord.lib.sleep_forced_wake import (
+            handle_sleep_mention,
+            is_forced_awake,
+        )
+        from plugins.leona_discord.lib.sleep_schedule import enter_sleep
+        from plugins.leona_discord.lib.store import buffer_sleep_mention, upsert_sleep_state
+
+        now = time_mod.time()
+        monkeypatch.setattr("plugins.leona_discord.lib.sleep_forced_wake.time.time", lambda: now)
+
+        enter_sleep("fw", "ch")
+        g = {
+            "sleep_schedule_enabled": True,
+            "sleep_forced_wake_enabled": True,
+            "sleep_forced_wake_mention_count": 3,
+            "sleep_forced_wake_window_minutes": 15,
+            "sleep_forced_wake_duration_minutes": 30,
+        }
+        for i in range(2):
+            buffer_sleep_mention("fw", "g1", "ch", f"m{i}", "u1", "user", "User", f"ping {i}")
+            assert handle_sleep_mention("fw", "ch", g) is None
+
+        buffer_sleep_mention("fw", "g1", "ch", "m2", "u1", "user", "User", "ping 2")
+        hint = handle_sleep_mention("fw", "ch", g)
+        assert hint is not None
+        assert "woke you up" in hint
+        assert is_forced_awake("fw", "ch")
+
+    def test_stays_awake_until_expiry(self, monkeypatch):
+        import time as time_mod
+        from plugins.leona_discord.lib.sleep_forced_wake import (
+            expire_forced_wake_if_needed,
+            handle_sleep_mention,
+            is_forced_awake,
+        )
+        from plugins.leona_discord.lib.store import upsert_sleep_state
+
+        t0 = 1_000_000.0
+        monkeypatch.setattr("plugins.leona_discord.lib.sleep_forced_wake.time.time", lambda: t0)
+
+        upsert_sleep_state("fw2", "ch2", is_asleep=True, forced_wake_until=t0 + 600)
+        g = {"sleep_schedule_enabled": True, "sleep_forced_wake_enabled": True}
+        assert is_forced_awake("fw2", "ch2")
+        hint = handle_sleep_mention("fw2", "ch2", g)
+        assert hint is not None
+        assert "still awake" in hint.lower() or "woken up earlier" in hint.lower()
+
+        monkeypatch.setattr("plugins.leona_discord.lib.sleep_forced_wake.time.time", lambda: t0 + 601)
+        assert expire_forced_wake_if_needed("fw2", "ch2")
+        assert not is_forced_awake("fw2", "ch2")
+
+
 class TestPickGifDescribeFrame:
     def test_prefers_middle_frame(self):
         from plugins.leona_discord.lib.images import _pick_gif_describe_frame
