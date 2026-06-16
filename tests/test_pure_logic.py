@@ -829,7 +829,7 @@ class TestSleepSchedule:
         from plugins.leona_discord.lib import sleep_schedule
         from plugins.leona_discord.lib.store import upsert_sleep_state
 
-        monkeypatch.setattr(sleep_schedule.random, "randint", lambda a, b: 42)
+        monkeypatch.setattr(sleep_schedule.random, "choice", lambda xs: 30)
         upsert_sleep_state("acct", "chan", sleep_date="2026-06-15", scheduled_sleep_minute=-1, goodnight_sent=False)
         g = {"sleep_schedule_enabled": True, "sleep_utc_hour": 22}
         due_early = sleep_schedule.goodnight_due(
@@ -840,6 +840,47 @@ class TestSleepSchedule:
             "acct", "chan", g, datetime(2026, 6, 15, 22, 10, tzinfo=timezone.utc),
         )
         assert not_due is False
+
+    def test_goodnight_due_catchup_legacy_minute(self):
+        from datetime import datetime, timezone
+        from plugins.leona_discord.lib.sleep_schedule import goodnight_due
+        from plugins.leona_discord.lib.store import upsert_sleep_state
+
+        g = {"sleep_schedule_enabled": True, "sleep_utc_hour": 22}
+        upsert_sleep_state(
+            "acct", "chan2", sleep_date="2026-06-15",
+            scheduled_sleep_minute=52, goodnight_sent=False,
+        )
+        # Minute 52 can never match */15 cron except via :45 catch-up
+        assert goodnight_due(
+            "acct", "chan2", g, datetime(2026, 6, 15, 22, 30, tzinfo=timezone.utc),
+        ) is False
+        assert goodnight_due(
+            "acct", "chan2", g, datetime(2026, 6, 15, 22, 45, tzinfo=timezone.utc),
+        ) is True
+
+    def test_shared_goodnight_minute(self, monkeypatch):
+        from datetime import datetime, timezone
+        from plugins.leona_discord.lib import sleep_schedule
+        from plugins.leona_discord.lib.sleep_schedule import ensure_sleep_minute, goodnight_due
+        from plugins.leona_discord.lib.store import init_db
+
+        init_db()
+        monkeypatch.setattr(sleep_schedule.random, "choice", lambda xs: 30)
+        monkeypatch.setattr(
+            "plugins.leona_discord.lib.store.random.choice", lambda xs: 30,
+        )
+        g = {
+            "sleep_schedule_enabled": True,
+            "sleep_utc_hour": 22,
+            "sleep_same_goodnight_minute": True,
+        }
+        m1 = ensure_sleep_minute("bot", "ch1", "2026-06-15", g)
+        m2 = ensure_sleep_minute("bot", "ch2", "2026-06-15", g)
+        assert m1 == m2 == 30
+        now = datetime(2026, 6, 15, 22, 30, tzinfo=timezone.utc)
+        assert goodnight_due("bot", "ch1", g, now)
+        assert goodnight_due("bot", "ch2", g, now)
 
     def test_enter_and_wake(self):
         from plugins.leona_discord.lib.sleep_schedule import (

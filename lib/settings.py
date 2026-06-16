@@ -75,6 +75,7 @@ SETTING_DEFAULTS = {
     "sleep_max_tokens": 180,
     "sleep_targets": [],
     "sleep_buffered_reply_max": 3,
+    "sleep_same_goodnight_minute": True,
     "sleep_forced_wake_enabled": False,
     "sleep_forced_wake_mention_count": 3,
     "sleep_forced_wake_window_minutes": 15,

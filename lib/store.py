@@ -2,6 +2,7 @@
 
 import json
 import logging
+import random
 import re
 import sqlite3
 import threading
@@ -335,10 +336,36 @@ def account_has_asleep_channels(account: str) -> bool:
     with _lock:
         conn = _db()
         row = conn.execute(
-            "SELECT 1 FROM sleep_state WHERE account = ? AND is_asleep = 1 LIMIT 1",
+            """
+            SELECT 1 FROM sleep_state
+            WHERE account = ? AND is_asleep = 1 AND channel_id NOT GLOB '_*'
+            LIMIT 1
+            """,
             (account,),
         ).fetchone()
     return row is not None
+
+
+# Internal row for shared goodnight minute across all target channels
+_SHARED_GOODNIGHT_ACCOUNT = "_schedule"
+_SHARED_GOODNIGHT_CHANNEL = "_shared_goodnight"
+
+
+def get_or_create_shared_goodnight_minute(sleep_date: str, choices: tuple) -> int:
+    """Return one goodnight minute for all channels on this UTC date."""
+    state = get_sleep_state(_SHARED_GOODNIGHT_ACCOUNT, _SHARED_GOODNIGHT_CHANNEL)
+    if state.get("sleep_date") == sleep_date and state.get("scheduled_sleep_minute", -1) >= 0:
+        return state["scheduled_sleep_minute"]
+    minute = random.choice(choices)
+    upsert_sleep_state(
+        _SHARED_GOODNIGHT_ACCOUNT,
+        _SHARED_GOODNIGHT_CHANNEL,
+        sleep_date=sleep_date,
+        scheduled_sleep_minute=minute,
+        goodnight_sent=False,
+        is_asleep=False,
+    )
+    return minute
 
 
 def buffer_sleep_mention(

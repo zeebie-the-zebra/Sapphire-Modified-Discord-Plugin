@@ -11,7 +11,9 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 ### Sleep schedule
 
 - **Goodnight → dormant → wake → buffered @mentions** (`lib/sleep_schedule.py`, `schedule/sleep_goodnight.py`, `lib/sleep_buffer.py`)
-- Random goodnight minute within sleep hour; morning greeting wakes channel; max N newest overnight @mentions replied (default 3)
+- Random goodnight slot within sleep hour (**:00 / :15 / :30 / :45** UTC, matching `*/15` cron); morning greeting wakes channel; max N newest overnight @mentions replied (default 3)
+- **Fix:** goodnight previously picked minutes 46–59, which the 15-minute cron never checked — some greeting channels could miss goodnight entirely
+- **Same Time for All Channels** (`sleep_same_goodnight_minute`, default on) — one shared goodnight cron slot per night for all sleep/greeting targets
 - **AI-generated goodnight** — optional LLM goodnight message with instructions, fallback, and optional dedicated model (`lib/goodnight_llm.py`, `schedule/sleep_goodnight.py`)
 - **Forced wake** — if enough direct @mentions arrive in a rolling window while asleep, the bot wakes temporarily, replies with a grumpy “you woke me up” LLM hint, then goes dormant again after a configurable duration (`lib/sleep_forced_wake.py`, `forced_wake_until` on `sleep_state`)
 - **Schedule hours in local time** — Quiet Hours, Sleep, Wake (greeting), and Outreach active hours are edited in the browser’s local timezone; values are stored as UTC on the server (`web/index.js` conversion helpers)

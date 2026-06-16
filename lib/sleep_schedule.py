@@ -8,6 +8,10 @@ from plugins.leona_discord.lib.schedule_utils import parse_target
 
 logger = logging.getLogger(__name__)
 
+# sleep_goodnight cron is */15 — only these minutes are checked each sleep hour
+GOODNIGHT_CRON_MINUTES = (0, 15, 30, 45)
+LAST_GOODNIGHT_CRON_MINUTE = GOODNIGHT_CRON_MINUTES[-1]
+
 
 def sleep_settings(global_s: dict) -> dict:
     return global_s or {}
@@ -61,14 +65,39 @@ def account_is_sleeping(account: str) -> bool:
     return account_has_asleep_channels(account)
 
 
-def ensure_sleep_minute(account: str, channel_id: str, sleep_date: str) -> int:
-    """Pick a random minute (0–59) for goodnight on this UTC date."""
-    from plugins.leona_discord.lib.store import get_sleep_state, upsert_sleep_state
+def same_goodnight_minute_all_channels(global_s: dict) -> bool:
+    return bool(sleep_settings(global_s).get("sleep_same_goodnight_minute", False))
 
+
+def ensure_sleep_minute(account: str, channel_id: str, sleep_date: str, global_s: dict = None) -> int:
+    """Pick goodnight minute for this channel on this UTC date (shared or per-channel)."""
+    from plugins.leona_discord.lib.store import (
+        get_or_create_shared_goodnight_minute,
+        get_sleep_state,
+        upsert_sleep_state,
+    )
+
+    g = global_s or {}
     state = get_sleep_state(account, channel_id)
+
+    if same_goodnight_minute_all_channels(g):
+        minute = get_or_create_shared_goodnight_minute(sleep_date, GOODNIGHT_CRON_MINUTES)
+        if (
+            state.get("sleep_date") != sleep_date
+            or state.get("scheduled_sleep_minute") != minute
+        ):
+            upsert_sleep_state(
+                account,
+                channel_id,
+                sleep_date=sleep_date,
+                scheduled_sleep_minute=minute,
+                goodnight_sent=False if state.get("sleep_date") != sleep_date else None,
+            )
+        return minute
+
     if state.get("sleep_date") == sleep_date and state.get("scheduled_sleep_minute", -1) >= 0:
         return state["scheduled_sleep_minute"]
-    minute = random.randint(0, 59)
+    minute = random.choice(GOODNIGHT_CRON_MINUTES)
     upsert_sleep_state(
         account,
         channel_id,
@@ -139,8 +168,14 @@ def goodnight_due(
         return False
     if state.get("is_asleep"):
         return False
-    minute = ensure_sleep_minute(account, channel_id, sleep_date)
-    return now.minute >= minute
+    minute = ensure_sleep_minute(account, channel_id, sleep_date, global_s)
+    if now.minute >= minute:
+        return True
+    # Catch-up on the last */15 cron tick — fixes legacy minutes 46–59 that
+    # could never fire, and guarantees every target channel gets goodnight.
+    if now.minute >= LAST_GOODNIGHT_CRON_MINUTE:
+        return True
+    return False
 
 
 def iter_sleep_target_channels(raw: dict):

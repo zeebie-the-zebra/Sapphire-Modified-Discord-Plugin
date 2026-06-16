@@ -1594,7 +1594,7 @@ function _personalityFieldsHTML(prefix) {
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label style="font-weight:600">Sleep Schedule</label>
-                    <div class="dc-row-help">At <strong>sleep hour (local)</strong> the bot posts a goodnight (random minute within that hour), then goes dormant. Direct @mentions are held until the <strong>morning greeting</strong> hour; only the newest buffered mentions get replies (limit below).</div>
+                    <div class="dc-row-help">At <strong>sleep hour (local)</strong> the bot posts a goodnight (shared or per-channel slot at :00, :15, :30, or :45), then goes dormant. Direct @mentions are held until the <strong>morning greeting</strong> hour; only the newest buffered mentions get replies (limit below).</div>
                 </div>
                 <div class="dc-row-control">
                     <label class="dc-toggle">
@@ -1611,6 +1611,19 @@ function _personalityFieldsHTML(prefix) {
                 </div>
             </div>
             <p id="${prefix}-sleep-hour-utc" class="dc-row-help" style="margin:-4px 0 8px 0"></p>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>Same Time for All Channels</label>
+                    <div class="dc-row-help">When on, every greeting channel shares one random goodnight slot (:00, :15, :30, or :45) each night. When off, each channel gets its own slot.</div>
+                </div>
+                <div class="dc-row-control">
+                    <label class="dc-toggle">
+                        <input type="checkbox" id="${prefix}-sleep-same-minute" checked>
+                        <span class="dc-toggle-track"></span>
+                        <span class="dc-toggle-thumb"></span>
+                    </label>
+                </div>
+            </div>
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label>Buffered @Mention Replies</label>
@@ -2439,6 +2452,7 @@ function _populatePersonalityFields(root, prefix, data, dmData) {
     c(`${prefix}-sleep-enabled`, data.sleep_schedule_enabled);
     v(`${prefix}-sleep-hour`, _utcHourToLocal(data.sleep_utc_hour ?? 22));
     v(`${prefix}-sleep-buffer-max`, data.sleep_buffered_reply_max ?? 3);
+    c(`${prefix}-sleep-same-minute`, data.sleep_same_goodnight_minute !== false);
     c(`${prefix}-sleep-forced-wake-enabled`, data.sleep_forced_wake_enabled);
     v(`${prefix}-sleep-forced-wake-count`, data.sleep_forced_wake_mention_count ?? 3);
     v(`${prefix}-sleep-forced-wake-window`, data.sleep_forced_wake_window_minutes ?? 15);
@@ -2503,6 +2517,7 @@ function _readPersonalityFields(root, prefix) {
         sleep_schedule_enabled: b(`${prefix}-sleep-enabled`),
         sleep_utc_hour: _localHourToUtc(i(`${prefix}-sleep-hour`)),
         sleep_buffered_reply_max: i(`${prefix}-sleep-buffer-max`),
+        sleep_same_goodnight_minute: b(`${prefix}-sleep-same-minute`),
         sleep_forced_wake_enabled: b(`${prefix}-sleep-forced-wake-enabled`),
         sleep_forced_wake_mention_count: i(`${prefix}-sleep-forced-wake-count`),
         sleep_forced_wake_window_minutes: i(`${prefix}-sleep-forced-wake-window`),

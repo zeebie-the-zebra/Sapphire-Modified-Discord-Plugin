@@ -58,6 +58,10 @@ def run_sleep_goodnight(raw: dict, system=None) -> str:
         try:
             if not goodnight_due(account, channel_id, g, now):
                 skipped += 1
+                logger.debug(
+                    f"[LEONA-DISCORD] Goodnight not due yet for {account}:{channel_id} "
+                    f"(now :{now.minute:02d} UTC)"
+                )
                 continue
 
             guild_name, channel_name = resolve_names(account, guild_id, channel_id)

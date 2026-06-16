@@ -387,6 +387,7 @@ Full sleep/wake cycle — stronger than Quiet Hours.
 |---------|---------|---------|
 | Sleep Schedule | Off | Master toggle |
 | Sleep hour (local) | 22 | Goodnight at a **random minute** within this hour |
+| Same Time for All Channels | On | One shared :00/:15/:30/:45 slot for every target channel each night |
 | Buffered @Mention Replies | 3 | Max replies after wake (newest first) |
 | Forced Wake | Off | Briefly rouse on enough @mentions while asleep |
 | @Mentions to Wake | 3 | Threshold count within the window |
@@ -400,7 +401,7 @@ Full sleep/wake cycle — stronger than Quiet Hours.
 
 ### Flow
 
-1. **Sleep hour:** `sleep_goodnight` cron (every 15 min) picks a random minute 0–59 per channel per night. After that minute, the bot posts **goodnight** and marks the channel **asleep**.
+1. **Sleep hour:** `sleep_goodnight` cron (every 15 min) picks a random slot at **:00, :15, :30, or :45** UTC per night. With **Same Time for All Channels** on (default), every target channel uses that one slot; when off, each channel gets its own slot. After the slot, the bot posts **goodnight** and marks the channel **asleep**. Any channel that has not fired by **:45** is caught up on the last cron tick of the hour.
 2. **While asleep:** No replies, reactions, or outreach. **Direct @mentions** are buffered in SQLite — unless **Forced Wake** triggers (below).
 3. **Forced wake (optional):** If **N** direct @mentions arrive within **M** minutes, the bot wakes temporarily: it replies to @mentions with a grumpy “you woke me up” tone (via an injected LLM hint), then goes dormant again after **Stay Awake** minutes. Mentions answered during forced wake are marked processed and are **not** replayed at morning greeting.
 4. **Wake hour** (Morning Greeting local hour): Good morning posts → channel wakes → up to **N** newest buffered @mentions get delayed LLM replies (25–75 s apart). Older buffered mentions are skipped.
