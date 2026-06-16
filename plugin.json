@@ -1,0 +1,91 @@
+{
+  "name": "leona_discord",
+  "short_name": "Leona Discord",
+  "version": "1.3.0",
+  "description": "Leona's modified Discord plugin — bot accounts, messaging, daemon listener",
+  "author": "sapphire",
+  "url": "https://sapphireblue.dev",
+  "icon": "🎮",
+  "priority": 50,
+  "default_enabled": false,
+  "settingsUI": "plugin",
+  "capabilities": {
+    "tools": ["tools/discord_tools.py"],
+    "scopes": [
+      {
+        "key": "discord",
+        "label": "discord",
+        "endpoint": "/api/plugin/leona_discord/accounts",
+        "data_key": "accounts",
+        "value_field": "name",
+        "name_field": "name",
+        "label_template": "{bot_name}"
+      }
+    ],
+    "daemon": {
+      "entry": "daemon.py",
+      "event_sources": [{
+        "name": "discord_message",
+        "label": "Discord Message",
+        "description": "New message received in a Discord channel",
+        "filter_fields": [
+          {"key": "mentioned", "label": "bot was @mentioned (True/False)"},
+          {"key": "guild_name", "label": "server name"},
+          {"key": "channel_name", "label": "channel name"},
+          {"key": "username", "label": "sender username"},
+          {"key": "content_contains", "label": "keyword in message"},
+          {"key": "channel_name_not", "label": "exclude channel name"},
+          {"key": "guild_name_not", "label": "exclude server name"},
+          {"key": "username_not", "label": "exclude username"},
+          {"key": "guild_id", "label": "server ID (advanced)"},
+          {"key": "channel_id", "label": "channel ID (advanced)"}
+        ],
+        "task_fields": [
+          {
+            "key": "auto_reply",
+            "type": "boolean",
+            "label": "Auto-reply in channel",
+            "default": false,
+            "help": "When enabled, the AI's response is sent back to the channel."
+          }
+        ]
+      }]
+    },
+    "routes": [
+      {"method": "GET",    "path": "accounts",                          "handler": "routes/accounts.py:list_accounts"},
+      {"method": "POST",   "path": "accounts",                          "handler": "routes/accounts.py:add_account"},
+      {"method": "DELETE", "path": "accounts/{name}",                   "handler": "routes/accounts.py:delete_account"},
+      {"method": "POST",   "path": "accounts/{name}/test",              "handler": "routes/accounts.py:test_account"},
+      {"method": "GET",    "path": "settings",                          "handler": "routes/settings.py:get_settings"},
+      {"method": "POST",   "path": "settings/global",                   "handler": "routes/settings.py:save_global_settings"},
+      {"method": "GET",    "path": "servers",                           "handler": "routes/settings.py:list_servers"},
+      {"method": "GET",    "path": "channels",                          "handler": "routes/settings.py:list_channels"},
+      {"method": "GET",    "path": "greeting/targets",                  "handler": "routes/settings.py:list_greeting_targets"},
+      {"method": "POST",   "path": "greeting/test",                     "handler": "routes/settings.py:test_greeting"},
+      {"method": "POST",   "path": "settings/servers/{guild_id}",       "handler": "routes/settings.py:save_server_settings"},
+      {"method": "DELETE", "path": "settings/servers/{guild_id}",       "handler": "routes/settings.py:delete_server_settings"},
+      {"method": "GET",    "path": "traces",                            "handler": "routes/traces.py:list_traces"},
+      {"method": "GET",    "path": "memory/stats",                      "handler": "routes/traces.py:memory_stats"}
+    ],
+    "schedule": [
+      {
+        "name": "morning_greeting",
+        "cron": "0 * * * *",
+        "handler": "schedule/morning_greeting.py",
+        "description": "Post configured morning greetings (checks UTC hour each hour)"
+      },
+      {
+        "name": "quiet_outreach",
+        "cron": "*/15 * * * *",
+        "handler": "schedule/quiet_outreach.py",
+        "description": "Proactive conversation starters when configured channels go quiet"
+      },
+      {
+        "name": "sleep_goodnight",
+        "cron": "*/15 * * * *",
+        "handler": "schedule/sleep_goodnight.py",
+        "description": "Goodnight messages and sleep state (checks sleep UTC hour with variable minute)"
+      }
+    ]
+  }
+}
