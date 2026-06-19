@@ -5,7 +5,7 @@ import logging
 import time
 
 from plugins.leona_discord.handlers.on_message import register_on_message
-from plugins.leona_discord.handlers.slash_commands import setup_slash_tree
+from plugins.leona_discord.handlers.slash_commands import register_slash_commands, setup_slash_tree
 from plugins.leona_discord.lib import state
 from plugins.leona_discord.lib.constants import CONNECT_COOLDOWN
 from plugins.leona_discord.lib.settings import get_always_online
@@ -97,6 +97,7 @@ async def connect_single(account_name: str, token: str = None):
         except Exception:
             pass
         try:
+            register_slash_commands(slash_tree, client, account_name)
             synced = await slash_tree.sync()
             logger.info(f"[DISCORD] Synced {len(synced)} slash command(s) for {account_name}")
         except Exception as e:

@@ -46,6 +46,42 @@ def wake_utc_hour(global_s: dict) -> int:
         return 9
 
 
+def in_sleep_hours(global_s: dict, now: datetime = None) -> bool:
+    """True during the configured overnight sleep window (UTC sleep hour until wake hour)."""
+    if not is_sleep_schedule_enabled(global_s):
+        return False
+    now = now or datetime.now(timezone.utc)
+    sleep = sleep_utc_hour(global_s)
+    wake = wake_utc_hour(global_s)
+    hour = now.hour
+    if sleep == wake:
+        return False
+    if sleep < wake:
+        return sleep <= hour < wake
+    return hour >= sleep or hour < wake
+
+
+def outreach_skip_reason_for_sleep(
+    raw: dict,
+    account: str,
+    channel_id: str,
+    now: datetime = None,
+) -> str:
+    """Return a skip reason when quiet outreach should defer to the sleep schedule."""
+    g = sleep_settings(raw.get("global", {}) or {})
+    if not is_sleep_schedule_enabled(g):
+        return ""
+    now = now or datetime.now(timezone.utc)
+    if in_sleep_hours(g, now):
+        return (
+            f"sleep hours (UTC {sleep_utc_hour(g):02d}:00–"
+            f"{wake_utc_hour(g):02d}:00)"
+        )
+    if is_channel_asleep(account, channel_id):
+        return "channel asleep (sleep schedule)"
+    return ""
+
+
 def buffered_reply_max(global_s: dict) -> int:
     try:
         return max(1, min(10, int(global_s.get("sleep_buffered_reply_max", 3))))

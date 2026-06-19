@@ -6,7 +6,9 @@ import discord
 from discord import app_commands
 
 from plugins.leona_discord.lib import events
+from plugins.leona_discord.lib import profile as user_profile
 from plugins.leona_discord.lib import store as sqlite_store
+from plugins.leona_discord.lib.bot_identity import bot_display_name
 from plugins.leona_discord.lib.history import format_recent_history, get_history_snapshot
 from plugins.leona_discord.lib.settings import get_plugin_settings
 from plugins.leona_discord.lib import state
@@ -15,9 +17,26 @@ logger = logging.getLogger(__name__)
 
 
 def setup_slash_tree(client: discord.Client, account_name: str) -> app_commands.CommandTree:
+    """Create an empty command tree; commands are registered in on_ready."""
     tree = app_commands.CommandTree(client)
+    tree._leona_account = account_name
+    client._slash_tree = tree
+    return tree
 
-    @tree.command(name="ask", description="Ask Leona a question in this channel")
+
+def register_slash_commands(
+    tree: app_commands.CommandTree,
+    client: discord.Client,
+    account_name: str,
+) -> None:
+    """Register slash commands using the connected bot's display name."""
+    if getattr(tree, "_slash_registered", False):
+        return
+    tree._slash_registered = True
+
+    bot_name = bot_display_name(client, account_name)
+
+    @tree.command(name="ask", description=f"Ask {bot_name} a question in this channel")
     @app_commands.describe(prompt="What do you want to ask?")
     async def ask_cmd(interaction: discord.Interaction, prompt: str):
         if not _slash_enabled():
@@ -34,7 +53,10 @@ def setup_slash_tree(client: discord.Client, account_name: str) -> app_commands.
             slash_command="ask",
         )
 
-    @tree.command(name="summarize", description="Summarize recent messages in this channel")
+    @tree.command(
+        name="summarize",
+        description=f"Ask {bot_name} to summarize recent messages in this channel",
+    )
     @app_commands.describe(count="How many messages to include (5–50)")
     async def summarize_cmd(interaction: discord.Interaction, count: int = 20):
         if not _slash_enabled():
@@ -64,7 +86,10 @@ def setup_slash_tree(client: discord.Client, account_name: str) -> app_commands.
         )
         await _emit_slash(interaction, account_name, prompt, slash_command="summarize")
 
-    @tree.command(name="remember", description="Save something to Leona's memory for this server")
+    @tree.command(
+        name="remember",
+        description=f"Save something to {bot_name}'s memory for this server",
+    )
     @app_commands.describe(note="What to remember (leave empty to use your last message)")
     async def remember_cmd(interaction: discord.Interaction, note: str = None):
         if not _slash_enabled():
@@ -88,13 +113,44 @@ def setup_slash_tree(client: discord.Client, account_name: str) -> app_commands.
             account_name, guild_id, channel_id,
             str(author.id), author.display_name, text,
         )
+        user_profile.save_user_fact(
+            account_name,
+            guild_id,
+            str(author.id),
+            text,
+            username=author.display_name,
+            confidence=0.95,
+        )
+        user_profile.record_user_message(
+            account_name,
+            guild_id,
+            str(author.id),
+            username=author.name,
+            display_name=author.display_name,
+            content=text,
+            is_dm=interaction.guild is None,
+            message_id=str(interaction.id),
+            mentioned=True,
+        )
         preview = text[:120] + ("…" if len(text) > 120 else "")
         await interaction.response.send_message(
             f"Saved to memory: _{preview}_", ephemeral=True,
         )
 
-    client._slash_tree = tree
-    return tree
+    @tree.command(
+        name="forget-me",
+        description=f"Erase {bot_name}'s profile memory of you (all servers)",
+    )
+    async def forget_me_cmd(interaction: discord.Interaction):
+        if not _slash_enabled():
+            await interaction.response.send_message("Slash commands are disabled.", ephemeral=True)
+            return
+        guild_id = str(interaction.guild_id) if interaction.guild else ""
+        author = interaction.user
+        user_profile.forget_user(account_name, guild_id, str(author.id))
+        await interaction.response.send_message(
+            "Your profile data has been erased.", ephemeral=True,
+        )
 
 
 def _slash_enabled() -> bool:

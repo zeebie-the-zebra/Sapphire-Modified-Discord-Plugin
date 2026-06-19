@@ -63,6 +63,27 @@ def build_bot_identity_hint(fields: dict) -> str:
     return "\n".join(lines)
 
 
+def bot_display_name(client=None, account: str = "") -> str:
+    """Human-readable bot name for UI strings and slash command descriptions."""
+    if client is not None:
+        user = getattr(client, "user", None)
+        if user:
+            for attr in ("global_name", "display_name", "name"):
+                value = str(getattr(user, attr, None) or "").strip()
+                if value:
+                    return value
+
+    account = str(account or "").strip()
+    if account:
+        fields = bot_identity_fields(account)
+        for key in ("bot_display_name", "bot_username"):
+            value = str(fields.get(key) or "").strip()
+            if value:
+                return value
+
+    return "the bot"
+
+
 def bot_name_aliases(fields: dict) -> list[str]:
     """Distinct non-empty display/username strings for the bot."""
     names: list[str] = []

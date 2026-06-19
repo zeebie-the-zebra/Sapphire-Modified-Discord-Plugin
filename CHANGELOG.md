@@ -4,6 +4,28 @@ All notable changes to the **Leona Discord** plugin (`plugins/leona_discord`).
 
 The stock `plugins/discord` plugin was **not modified** — Leona is a separate, personality-oriented fork.
 
+## Unreleased
+
+### User profiling
+
+- **Global profiles** — one profile per Discord user (`author_id`) across all guilds and DMs; legacy per-guild rows merge automatically on startup (`lib/profile_store.py`)
+- **Cross-guild distillation** — profile distiller pulls recent messages from all servers for the same user (`lib/store.py`)
+
+### User profiling (v1.5.0)
+
+- **Per-user relationship memory** — self-contained SQLite profiles keyed by `(account, guild_id, author_id)` with message counters, disposition floats (familiarity, warmth, trust, playfulness, patience, interest), and evidence-backed facts (`lib/profile.py`, `lib/profile_store.py`)
+- **Passive ingest** — every incoming message updates counters and disposition; bot replies, ignores, and read-only reacts adjust interest (`handlers/on_message.py`, `handlers/reply_handler.py`)
+- **Prompt injection** — `[People context — internal]` block injected before replies alongside channel memory (`lib/batching.py`, `lib/events.py`)
+- **Reply chance modulation** — optional per-user interest/familiarity scaling of organic reply probability (`profiling_modulate_reply_chance`)
+- **LLM distiller** — scheduled job every 3 minutes extracts facts and L1/L2 summaries from buffered interactions (`schedule/profile_distill.py`, `lib/profile_distill_llm.py`)
+- **Slash commands** — `/remember` also writes a high-confidence profile fact; new `/forget-me` wipes the caller's profile in the current server
+- **Settings UI** — Memory tab → User Profiling section with enable/disable and all options (`web/index.js`)
+- **Design doc** — `user_profiling_design.md`
+
+### Slash commands
+
+- `/ask`, `/summarize`, and `/remember` descriptions now use the connected bot's display name instead of hardcoded "Leona" (registered on connect before `CommandTree.sync()`).
+
 ---
 
 ## Human-like response timing (v1.4.0)
@@ -15,7 +37,9 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 - **Fix:** goodnight previously picked minutes 46–59, which the 15-minute cron never checked — some greeting channels could miss goodnight entirely
 - **Same Time for All Channels** (`sleep_same_goodnight_minute`, default on) — one shared goodnight cron slot per night for all sleep/greeting targets
 - **AI-generated goodnight** — optional LLM goodnight message with instructions, fallback, and optional dedicated model (`lib/goodnight_llm.py`, `schedule/sleep_goodnight.py`)
-- **Forced wake** — if enough direct @mentions arrive in a rolling window while asleep, the bot wakes temporarily, replies with a grumpy “you woke me up” LLM hint, then goes dormant again after a configurable duration (`lib/sleep_forced_wake.py`, `forced_wake_until` on `sleep_state`)
+- **Forced wake** — if enough direct @mentions arrive in a rolling window while asleep, the bot wakes temporarily, replies with a grumpy “you woke me up” LLM hint, then goes dormant again after a configurable duration (`lib/sleep_forced_wake.py`, `forced_wake_until` on `sleep_state`). If the LLM returns empty/thinking-only text, a **forced-wake fallback** message is still posted.
+- **Test forced wake** button + `POST /api/plugin/leona_discord/sleep/forced-wake/test` — queues synthetic @mention reply on selected channels (`schedule/forced_wake_test.py`)
+- **Fix:** quiet outreach could still fire while the bot was asleep — now suppressed for the full sleep window (UTC sleep hour until wake hour) and while any channel remains marked asleep (`in_sleep_hours`, `outreach_skip_reason_for_sleep`)
 - **Schedule hours in local time** — Quiet Hours, Sleep, Wake (greeting), and Outreach active hours are edited in the browser’s local timezone; values are stored as UTC on the server (`web/index.js` conversion helpers)
 
 ### Tabbed Global Settings UI

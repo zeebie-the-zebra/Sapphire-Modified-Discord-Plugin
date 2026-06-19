@@ -1,7 +1,7 @@
 {
   "name": "leona_discord",
   "short_name": "Leona Discord",
-  "version": "1.4.0",
+  "version": "1.5.1",
   "description": "Leona's modified Discord plugin — bot accounts, messaging, daemon listener",
   "author": "sapphire",
   "url": "https://sapphireblue.dev",
@@ -62,10 +62,14 @@
       {"method": "GET",    "path": "channels",                          "handler": "routes/settings.py:list_channels"},
       {"method": "GET",    "path": "greeting/targets",                  "handler": "routes/settings.py:list_greeting_targets"},
       {"method": "POST",   "path": "greeting/test",                     "handler": "routes/settings.py:test_greeting"},
+      {"method": "POST",   "path": "sleep/forced-wake/test",            "handler": "routes/settings.py:test_forced_wake"},
       {"method": "POST",   "path": "settings/servers/{guild_id}",       "handler": "routes/settings.py:save_server_settings"},
       {"method": "DELETE", "path": "settings/servers/{guild_id}",       "handler": "routes/settings.py:delete_server_settings"},
       {"method": "GET",    "path": "traces",                            "handler": "routes/traces.py:list_traces"},
-      {"method": "GET",    "path": "memory/stats",                      "handler": "routes/traces.py:memory_stats"}
+      {"method": "GET",    "path": "memory/stats",                      "handler": "routes/traces.py:memory_stats"},
+      {"method": "GET",    "path": "profiles",                          "handler": "routes/profiles.py:list_profiles"},
+      {"method": "POST",   "path": "profiles/reset",                    "handler": "routes/profiles.py:reset_profile"},
+      {"method": "POST",   "path": "profiles/distill-now",              "handler": "routes/profiles.py:run_distill_now"}
     ],
     "schedule": [
       {
@@ -85,6 +89,12 @@
         "cron": "*/15 * * * *",
         "handler": "schedule/sleep_goodnight.py",
         "description": "Goodnight messages and sleep state (checks sleep UTC hour with variable minute)"
+      },
+      {
+        "name": "profile_distill",
+        "cron": "* * * * *",
+        "handler": "schedule/profile_distill.py",
+        "description": "Background user profile distillation and disposition decay"
       }
     ]
   }

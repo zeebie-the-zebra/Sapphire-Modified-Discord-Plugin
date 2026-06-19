@@ -12,6 +12,7 @@ from plugins.leona_discord.lib.core_compat import ensure_execution_context_image
 from plugins.leona_discord.lib.batching import flush_all_pending
 from plugins.leona_discord.lib.connection import connect_accounts, connect_single
 from plugins.leona_discord.lib import memory
+from plugins.leona_discord.lib import profile
 from plugins.leona_discord.lib.context_cache import (
     get_pending_payload,
     get_reply_context,
@@ -46,6 +47,7 @@ def start(plugin_loader, settings):
         plugin_loader.register_reply_handler("leona_discord", reply_handler)
         ensure_execution_context_images_support()
         memory.start()
+        profile.start()
     logger.info("[DISCORD] Daemon thread started")
 
 
@@ -55,6 +57,7 @@ def stop():
         state._stop_event.set()
         flush_all_pending()
         memory.stop()
+        profile.stop()
 
         if state._loop and state._loop.is_running():
             async def _shutdown():

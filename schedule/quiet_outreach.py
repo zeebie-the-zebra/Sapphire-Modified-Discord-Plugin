@@ -31,6 +31,19 @@ def run(event):
     if in_quiet_hours(g):
         return "Skipped (quiet hours)"
 
+    from plugins.leona_discord.lib.sleep_schedule import (
+        in_sleep_hours,
+        is_sleep_schedule_enabled,
+        sleep_utc_hour,
+        wake_utc_hour,
+    )
+
+    if is_sleep_schedule_enabled(g) and in_sleep_hours(g):
+        return (
+            f"Skipped (sleep hours UTC {sleep_utc_hour(g):02d}:00–"
+            f"{wake_utc_hour(g):02d}:00)"
+        )
+
     if not _in_active_hours(g):
         return "Skipped (outside active hours)"
 
@@ -78,7 +91,14 @@ def run(event):
             account, guild_id, channel_id = parsed
 
             from plugins.leona_discord.lib.proactive_guard import outreach_skip_reason_for_greeting
+            from plugins.leona_discord.lib.sleep_schedule import outreach_skip_reason_for_sleep
+
             skip_reason = outreach_skip_reason_for_greeting(raw, account, channel_id)
+            if skip_reason:
+                skipped += 1
+                continue
+
+            skip_reason = outreach_skip_reason_for_sleep(raw, account, channel_id)
             if skip_reason:
                 skipped += 1
                 continue
@@ -102,11 +122,6 @@ def run(event):
 
             guild_name, channel_name = resolve_names(account, guild_id, channel_id)
             quiet_hours = (now - last_human) / 3600.0
-
-            from plugins.leona_discord.lib.sleep_schedule import is_channel_asleep
-            if is_channel_asleep(account, channel_id):
-                skipped += 1
-                continue
 
             message = _build_message(
                 system, use_llm, instructions, fallback,

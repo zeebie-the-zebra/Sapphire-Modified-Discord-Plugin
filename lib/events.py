@@ -16,6 +16,7 @@ from plugins.leona_discord.lib.history import (
     store_mention_map,
 )
 from plugins.leona_discord.lib import memory
+from plugins.leona_discord.lib import profile
 from plugins.leona_discord.lib.reactions import build_reaction_hint
 from plugins.leona_discord.lib.settings import get_effective_settings
 from plugins.leona_discord.lib.typing_indicator import fire_typing
@@ -71,6 +72,18 @@ def build_event_payload(
     )
     if memory_context:
         combined = f"{memory_context}\n\n{combined}"
+    profile_context = profile.recall_user_context(
+        account,
+        guild_id,
+        author_id,
+        combined,
+        username=username,
+        display_name=display_name,
+        is_dm=is_dm,
+        mentioned=bool(mentioned),
+    )
+    if profile_context:
+        combined = f"{profile_context}\n\n{combined}"
     if reaction_hint:
         combined = f"{combined}\n\n{reaction_hint}"
 
@@ -88,6 +101,11 @@ def build_event_payload(
     msg_stub = [{"author_id": author_id, "username": username, "display_name": display_name}]
     mention_map = build_mention_map(full_history, msg_stub)
     store_mention_map(channel_key, mention_map)
+
+    from plugins.leona_discord.lib.messages import parse_discord_snowflake
+
+    reply_target = reply_to_message_id or message_id
+    snowflake = parse_discord_snowflake(reply_target)
 
     payload = {
         "account": account,
@@ -107,10 +125,11 @@ def build_event_payload(
         "history_size": len(full_history),
         "mention_map": mention_map,
         "memory_context": bool(memory_context),
+        "profile_context": bool(profile_context),
         "image_urls": image_urls or [],
         "image_described": False,
         "slash_command": slash_command,
-        "reply_to_message_id": reply_to_message_id or message_id,
+        "reply_to_message_id": str(snowflake) if snowflake else "",
     }
 
     from plugins.leona_discord.lib.bot_identity import enrich_payload_with_bot_identity

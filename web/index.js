@@ -455,6 +455,7 @@ registerPluginSettings({
                         <button type="button" class="dc-tab-btn" data-tab="replies">Replies</button>
                         <button type="button" class="dc-tab-btn" data-tab="reactions">Reactions &amp; Media</button>
                         <button type="button" class="dc-tab-btn" data-tab="memory">Memory</button>
+                        <button type="button" class="dc-tab-btn" data-tab="profiles">Profiles</button>
                         <button type="button" class="dc-tab-btn" data-tab="presence">Presence</button>
                         <button type="button" class="dc-tab-btn" data-tab="advanced">Advanced</button>
                         <button type="button" class="dc-tab-btn" data-tab="debug">Debug</button>
@@ -554,6 +555,42 @@ registerPluginSettings({
                         <div id="dc-tab-memory-detail"></div>
                     </div>
 
+                    <div class="dc-tab-panel" data-tab="profiles" id="dc-tab-profiles">
+                        <p class="dc-tab-intro">Inspect per-user profiling state (one profile per user across all servers) and manually reset any profile.</p>
+                        <div class="dc-card">
+                            <div class="dc-row">
+                                <div class="dc-row-label">
+                                    <label>Disposition Legend</label>
+                                    <div class="dc-row-help">
+                                        Values are 0.00–1.00 internal scores (around 0.50 is neutral, higher means stronger).<br>
+                                        <code>fam</code> familiarity · <code>warm</code> warmth · <code>trust</code> trust · <code>play</code> playfulness · <code>pat</code> patience · <code>int</code> interest/engagement.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dc-card">
+                            <div class="dc-row">
+                                <div class="dc-row-label">
+                                    <label>Filters</label>
+                                    <div class="dc-row-help">Optional filters. Guild id limits to users with message activity in that server.</div>
+                                </div>
+                                <div class="dc-row-control" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                    <input type="text" id="dc-profile-filter-account" class="dc-input dc-input-sm" placeholder="account" style="width:120px">
+                                    <input type="text" id="dc-profile-filter-guild" class="dc-input dc-input-sm" placeholder="guild activity filter" style="width:160px">
+                                    <input type="text" id="dc-profile-filter-username" class="dc-input dc-input-sm" placeholder="username/display name" style="width:190px">
+                                    <button class="dc-btn dc-btn-sm" id="dc-apply-profile-filters">Apply</button>
+                                    <button class="dc-btn dc-btn-sm" id="dc-clear-profile-filters">Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dc-save-bar" style="margin:12px 0 8px">
+                            <button class="dc-btn dc-btn-sm" id="dc-refresh-profiles">Refresh Profiles</button>
+                            <button class="dc-btn dc-btn-sm" id="dc-run-profile-distill">Run Distill Now</button>
+                            <span id="dc-profile-status" class="dc-status"></span>
+                        </div>
+                        <div id="dc-profile-list" class="dc-card"><p class="dc-empty">Loading profiles…</p></div>
+                    </div>
+
                     <div class="dc-tab-panel" data-tab="presence" id="dc-tab-presence"></div>
 
                     <div class="dc-tab-panel" data-tab="advanced" id="dc-tab-advanced"></div>
@@ -612,10 +649,55 @@ registerPluginSettings({
         _loadAccounts(container);
         _loadServers(container);
         _loadTraces(container);
+        _loadProfiles(container);
 
         container.querySelector('#dc-add-account')?.addEventListener('click', () => _showAddForm(container));
         container.querySelector('#dc-save-global')?.addEventListener('click', () => _saveGlobalSettings(container));
         container.querySelector('#dc-refresh-traces')?.addEventListener('click', () => _loadTraces(container));
+        container.querySelector('#dc-refresh-profiles')?.addEventListener('click', () => _loadProfiles(container));
+        container.querySelector('#dc-run-profile-distill')?.addEventListener('click', async () => {
+            const btn = container.querySelector('#dc-run-profile-distill');
+            const status = container.querySelector('#dc-profile-status');
+            if (!btn) return;
+            const old = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Running…';
+            try {
+                const res = await fetch('/api/plugin/leona_discord/profiles/distill-now', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF() },
+                    body: JSON.stringify({}),
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+                if (status) {
+                    status.textContent = data.message || 'Distill run complete';
+                    status.className = 'dc-status dc-status-ok';
+                }
+                await _loadProfiles(container);
+            } catch (e) {
+                if (status) {
+                    status.textContent = `Distill failed: ${e.message}`;
+                    status.className = 'dc-status dc-status-err';
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = old;
+            }
+        });
+        container.querySelector('#dc-apply-profile-filters')?.addEventListener('click', () => _loadProfiles(container));
+        container.querySelector('#dc-clear-profile-filters')?.addEventListener('click', () => {
+            const a = container.querySelector('#dc-profile-filter-account');
+            const g = container.querySelector('#dc-profile-filter-guild');
+            const u = container.querySelector('#dc-profile-filter-username');
+            if (a) a.value = '';
+            if (g) g.value = '';
+            if (u) u.value = '';
+            _loadProfiles(container);
+        });
+        container.querySelector('#dc-profile-filter-username')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') _loadProfiles(container);
+        });
     },
 
     load: async () => ({}),
@@ -1051,6 +1133,169 @@ function _memoryFieldsHTML(prefix) {
 }
 
 
+function _profilingFieldsHTML(prefix) {
+    const providerHtml = _llmProviderOptionsHtml();
+    return `
+        <div class="dc-section-header" style="padding-top:14px">
+            <span class="dc-section-label">User Profiling</span>
+            <span class="dc-section-divider"></span>
+        </div>
+        <p class="dc-tab-intro" style="margin:0 0 8px">Build per-user relationship memory from Discord interactions. Injected into replies automatically — no tool calls.</p>
+        <div class="dc-card">
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>User Profiling</label>
+                    <div class="dc-row-help">Track who people are and how Leona feels toward them. Off by default — enable when you want personalized recall.</div>
+                </div>
+                <div class="dc-row-control">
+                    <label class="dc-toggle">
+                        <input type="checkbox" id="${prefix}-profiling-enabled">
+                        <span class="dc-toggle-track"></span>
+                        <span class="dc-toggle-thumb"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div id="${prefix}-profiling-options" style="display:none">
+            <div class="dc-card" style="margin-top:6px">
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>DMs Only</label>
+                        <div class="dc-row-help">When on, profiling and injection only run in direct messages — not guild channels.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-toggle">
+                            <input type="checkbox" id="${prefix}-profiling-dm-only">
+                            <span class="dc-toggle-track"></span>
+                            <span class="dc-toggle-thumb"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Modulate Reply Chance</label>
+                        <div class="dc-row-help">Scale organic reply probability by per-user interest and familiarity.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-toggle">
+                            <input type="checkbox" id="${prefix}-profiling-modulate" checked>
+                            <span class="dc-toggle-track"></span>
+                            <span class="dc-toggle-thumb"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>LLM Profile Distillation</label>
+                        <div class="dc-row-help">Background job extracts facts and summaries from conversations. Runs only when there is queued new content.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-toggle">
+                            <input type="checkbox" id="${prefix}-profiling-use-llm" checked>
+                            <span class="dc-toggle-track"></span>
+                            <span class="dc-toggle-thumb"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Imperfect Recall</label>
+                        <div class="dc-row-help">Occasionally omit profile context for a more human feel.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-toggle">
+                            <input type="checkbox" id="${prefix}-profiling-imperfect">
+                            <span class="dc-toggle-track"></span>
+                            <span class="dc-toggle-thumb"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="dc-card" style="margin-top:6px">
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Min Messages Before LLM</label>
+                        <div class="dc-row-help">Wait until a user has sent this many messages before running distillation.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-profiling-min-messages" min="1" max="100" step="1" value="5"
+                            class="dc-input dc-input-sm">
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Profile Token Budget</label>
+                        <div class="dc-row-help">Max tokens of per-user context injected per reply.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-profiling-max-tokens" min="80" max="800" step="20" value="300"
+                            class="dc-input dc-input-sm">
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Fact Confidence Minimum</label>
+                        <div class="dc-row-help">Only inject facts at or above this confidence (0.0–1.0).</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-profiling-fact-min" min="0" max="1" step="0.05" value="0.6"
+                            class="dc-input dc-input-sm" style="width:90px">
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Imperfect Recall Chance</label>
+                        <div class="dc-row-help">Probability of skipping profile injection when imperfect recall is on.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-profiling-imperfect-chance" min="0" max="0.5" step="0.01" value="0.05"
+                            class="dc-input dc-input-sm" style="width:90px">
+                    </div>
+                </div>
+            </div>
+            <div id="${prefix}-profiling-llm-options" class="dc-card" style="margin-top:6px">
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Distiller Model Provider</label>
+                        <div class="dc-row-help">Optional — leave blank to use the default chat model.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <select id="${prefix}-profiling-provider" class="dc-select dc-input-md">${providerHtml}</select>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Distiller Model Name</label>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="text" id="${prefix}-profiling-model" class="dc-input dc-input-md" placeholder="model id">
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Distiller Interval (minutes)</label>
+                        <div class="dc-row-help">Minimum spacing between distillation passes when new content is queued.</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-profiling-distill-interval" min="1" max="60" step="1" value="3"
+                            class="dc-input dc-input-sm">
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Distiller Max Tokens</label>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-profiling-distill-max" min="120" max="800" step="20" value="400"
+                            class="dc-input dc-input-sm">
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+
 function _appendFieldsHTML(prefix) {
     return `
         <!-- Append to user message card -->
@@ -1103,7 +1348,7 @@ function _initGlobalSettingsFields(container) {
         '<p class="dc-tab-intro">Personality presets, reply chances, cooldowns, and access lists.</p>'
         + _replyFieldsHTML(p));
     mount('#dc-reactions-fields-mount', _reactionsFieldsHTML(p));
-    mount('#dc-tab-memory-detail', _memoryFieldsHTML(p));
+    mount('#dc-tab-memory-detail', _memoryFieldsHTML(p) + _profilingFieldsHTML(p));
     mount('#dc-tab-advanced',
         '<p class="dc-tab-intro">Inject extra text into every user message sent to the base model.</p>'
         + _appendFieldsHTML(p));
@@ -1117,8 +1362,20 @@ function _initGlobalSettingsFields(container) {
     _renderImageSettings(container, p);
     _renderGifSettings(container, p);
     _wireGreetingTargetPicker(container, p);
+    _wireForcedWakeTest(container, p);
     _wireOutreachTargetPicker(container, p);
     _wireLocalScheduleHours(container, p);
+    _wireProfilingToggle(container, p);
+}
+
+
+function _wireProfilingToggle(root, prefix) {
+    const enabled = root.querySelector(`#${prefix}-profiling-enabled`);
+    const opts = root.querySelector(`#${prefix}-profiling-options`);
+    if (!enabled || !opts) return;
+    const sync = () => { opts.style.display = enabled.checked ? 'block' : 'none'; };
+    enabled.addEventListener('change', sync);
+    sync();
 }
 
 
@@ -1191,6 +1448,7 @@ function _wireGlobalTabs(container) {
             const tab = btn.dataset.tab;
             nav.querySelectorAll('.dc-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
             panels.forEach(panel => panel.classList.toggle('active', panel.dataset.tab === tab));
+            if (tab === 'profiles') _loadProfiles(container);
         });
     });
 }
@@ -1275,6 +1533,7 @@ function _refreshLlmProviderDropdowns(root, prefix) {
         'greeting-provider',
         'outreach-provider',
         'sleep-provider',
+        'profiling-provider',
     ];
     for (const key of keys) {
         const sel = root.querySelector(`#${prefix}-${key}`);
@@ -1671,6 +1930,16 @@ function _personalityFieldsHTML(prefix) {
                 </div>
                 <div class="dc-row-control">
                     <input type="number" id="${prefix}-sleep-forced-wake-duration" min="5" max="180" value="30" class="dc-input dc-input-sm" style="width:60px">
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>Test Forced Wake</label>
+                    <div class="dc-row-help">Marks selected channels asleep + forced-awake, then queues a test @mention reply (needs <strong>Discord Bot Reply</strong> task with auto-reply). Uses greeting channels when <strong>Use Greeting Channels</strong> is on.</div>
+                </div>
+                <div class="dc-row-control" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <button type="button" class="dc-btn dc-btn-sm" id="${prefix}-forced-wake-test">Test forced wake</button>
+                    <span id="${prefix}-forced-wake-test-status" class="dc-row-help" style="margin:0"></span>
                 </div>
             </div>
             <div class="dc-row">
@@ -2186,6 +2455,70 @@ async function _sendTestGreeting(root, prefix) {
 }
 
 
+async function _sendTestForcedWake(root, prefix) {
+    const btn = root.querySelector(`#${prefix}-forced-wake-test`);
+    const status = root.querySelector(`#${prefix}-forced-wake-test-status`);
+    if (!btn) return;
+
+    _syncGreetingTargets(root, prefix);
+    const useGreeting = root.querySelector(`#${prefix}-sleep-use-greeting-targets`)?.checked !== false;
+    const targets = useGreeting ? [..._getGreetingSet(prefix)] : [];
+
+    if (useGreeting && !targets.length) {
+        if (status) {
+            status.textContent = 'Select at least one greeting channel first.';
+            status.style.color = 'var(--error, #f04747)';
+        }
+        return;
+    }
+
+    btn.disabled = true;
+    if (status) {
+        status.textContent = 'Queuing…';
+        status.style.color = '';
+    }
+
+    const v = (id) => root.querySelector(`#${id}`)?.value ?? '';
+    const b = (id) => root.querySelector(`#${id}`)?.checked ?? false;
+    const i = (id) => parseInt(v(id) || '0', 10);
+
+    try {
+        const res = await fetch('/api/plugin/leona_discord/sleep/forced-wake/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF() },
+            body: JSON.stringify({
+                sleep_forced_wake_enabled: b(`${prefix}-sleep-forced-wake-enabled`),
+                sleep_forced_wake_mention_count: i(`${prefix}-sleep-forced-wake-count`),
+                sleep_forced_wake_window_minutes: i(`${prefix}-sleep-forced-wake-window`),
+                sleep_forced_wake_duration_minutes: i(`${prefix}-sleep-forced-wake-duration`),
+                sleep_use_greeting_targets: useGreeting,
+                greeting_targets: targets,
+            }),
+        });
+        const data = await res.json();
+        if (status) {
+            status.textContent = data.message || data.error || (data.success ? 'Queued' : 'Failed');
+            status.style.color = data.success ? 'var(--success, #43b581)' : 'var(--error, #f04747)';
+        }
+    } catch (e) {
+        if (status) {
+            status.textContent = e.message || 'Request failed';
+            status.style.color = 'var(--error, #f04747)';
+        }
+    }
+    btn.disabled = false;
+}
+
+
+function _wireForcedWakeTest(root, prefix) {
+    const testBtn = root.querySelector(`#${prefix}-forced-wake-test`);
+    if (testBtn && !testBtn.dataset.wired) {
+        testBtn.dataset.wired = '1';
+        testBtn.addEventListener('click', () => _sendTestForcedWake(root, prefix));
+    }
+}
+
+
 function _wireGreetingTargetPicker(root, prefix) {
     const refresh = root.querySelector(`#${prefix}-greeting-refresh`);
     if (refresh && !refresh.dataset.wired) {
@@ -2676,6 +3009,23 @@ function _populateFields(root, prefix, data) {
     v(`${prefix}-history-line-max-chars`, data.history_line_max_chars ?? 280);
     v(`${prefix}-memory-max-tokens`, data.memory_max_tokens ?? 300);
     v(`${prefix}-memory-threshold`, data.memory_search_threshold ?? 0.35);
+
+    const profilingEnabled = data.profiling_enabled ?? false;
+    c(`${prefix}-profiling-enabled`, profilingEnabled);
+    const profilingOpts = root.querySelector(`#${prefix}-profiling-options`);
+    if (profilingOpts) profilingOpts.style.display = profilingEnabled ? 'block' : 'none';
+    c(`${prefix}-profiling-dm-only`, data.profiling_dm_only ?? false);
+    c(`${prefix}-profiling-modulate`, data.profiling_modulate_reply_chance !== false);
+    c(`${prefix}-profiling-use-llm`, data.profiling_use_llm !== false);
+    c(`${prefix}-profiling-imperfect`, data.profiling_imperfect_recall ?? false);
+    v(`${prefix}-profiling-min-messages`, data.profiling_min_messages ?? 5);
+    v(`${prefix}-profiling-max-tokens`, data.profiling_max_tokens ?? 300);
+    v(`${prefix}-profiling-fact-min`, data.profiling_fact_confidence_min ?? 0.6);
+    v(`${prefix}-profiling-imperfect-chance`, data.profiling_imperfect_recall_chance ?? 0.05);
+    v(`${prefix}-profiling-provider`, data.profiling_model_provider ?? '');
+    v(`${prefix}-profiling-model`, data.profiling_model_name ?? '');
+    v(`${prefix}-profiling-distill-interval`, data.profiling_distill_interval_minutes ?? 3);
+    v(`${prefix}-profiling-distill-max`, data.profiling_distill_max_tokens ?? 400);
 }
 
 
@@ -2731,6 +3081,19 @@ function _readFields(root, prefix) {
         history_line_max_chars:    i(`${prefix}-history-line-max-chars`),
         memory_max_tokens:         i(`${prefix}-memory-max-tokens`),
         memory_search_threshold:   parseFloat(v(`${prefix}-memory-threshold`) || '0.35'),
+        profiling_enabled:         b(`${prefix}-profiling-enabled`),
+        profiling_dm_only:         b(`${prefix}-profiling-dm-only`),
+        profiling_modulate_reply_chance: b(`${prefix}-profiling-modulate`),
+        profiling_use_llm:         b(`${prefix}-profiling-use-llm`),
+        profiling_imperfect_recall: b(`${prefix}-profiling-imperfect`),
+        profiling_min_messages:    i(`${prefix}-profiling-min-messages`),
+        profiling_max_tokens:      i(`${prefix}-profiling-max-tokens`),
+        profiling_fact_confidence_min: parseFloat(v(`${prefix}-profiling-fact-min`) || '0.6'),
+        profiling_imperfect_recall_chance: parseFloat(v(`${prefix}-profiling-imperfect-chance`) || '0.05'),
+        profiling_model_provider:  v(`${prefix}-profiling-provider`),
+        profiling_model_name:      v(`${prefix}-profiling-model`),
+        profiling_distill_interval_minutes: i(`${prefix}-profiling-distill-interval`),
+        profiling_distill_max_tokens: i(`${prefix}-profiling-distill-max`),
     };
 }
 
@@ -2982,7 +3345,11 @@ async function _loadTraces(container) {
         const traces = tRes.ok ? (await tRes.json()).traces || [] : [];
         const mem = mRes.ok ? await mRes.json() : {};
         if (status) {
-            status.textContent = `${mem.message_count ?? 0} messages stored · ${mem.backend || 'sqlite'}`;
+            const prof = mem.profiling || {};
+            const profPart = prof.enabled
+                ? ` · ${prof.profile_count ?? 0} profiles`
+                : '';
+            status.textContent = `${mem.message_count ?? 0} messages stored · ${mem.backend || 'sqlite'}${profPart}`;
             status.className = 'dc-status dc-status-ok';
         }
         if (!traces.length) {
@@ -3001,6 +3368,115 @@ async function _loadTraces(container) {
         }).join('');
     } catch (e) {
         panel.innerHTML = `<p class="dc-empty">Failed to load traces: ${_esc(e.message)}</p>`;
+    }
+}
+
+
+function _profileDispositionLine(p) {
+    const vals = [
+        ['fam', p.familiarity],
+        ['warm', p.warmth],
+        ['trust', p.trust],
+        ['play', p.playfulness],
+        ['pat', p.patience],
+        ['int', p.interest],
+    ];
+    return vals
+        .map(([k, v]) => `${k}:${Number(v ?? 0).toFixed(2)}`)
+        .join(' · ');
+}
+
+
+async function _loadProfiles(container) {
+    const panel = container.querySelector('#dc-profile-list');
+    const status = container.querySelector('#dc-profile-status');
+    if (!panel) return;
+    try {
+        const account = (container.querySelector('#dc-profile-filter-account')?.value || '').trim();
+        const guildId = (container.querySelector('#dc-profile-filter-guild')?.value || '').trim();
+        const username = (container.querySelector('#dc-profile-filter-username')?.value || '').trim();
+        const qs = new URLSearchParams({ limit: '100' });
+        if (account) qs.set('account', account);
+        if (guildId) qs.set('guild_id', guildId);
+        if (username) qs.set('username', username);
+
+        const res = await fetch(`/api/plugin/leona_discord/profiles?${qs.toString()}`);
+        const data = res.ok ? await res.json() : {};
+        const profiles = Array.isArray(data.profiles) ? data.profiles : [];
+        if (status) {
+            const activeFilters = [account, guildId, username].filter(Boolean).length;
+            const suffix = activeFilters ? ' (filtered)' : '';
+            status.textContent = `${profiles.length} profile(s)${suffix}`;
+            status.className = 'dc-status dc-status-ok';
+        }
+        if (!profiles.length) {
+            panel.innerHTML = '<p class="dc-empty">No user profiles yet. Enable profiling and chat a bit first.</p>';
+            return;
+        }
+        panel.innerHTML = profiles.map((p, idx) => {
+            const name = p.display_name || p.username || p.author_id || 'unknown';
+            const when = p.last_seen_at ? new Date(p.last_seen_at * 1000).toLocaleString() : 'unknown';
+            const facts = (p.facts || []).slice(0, 4).map(f => `• ${_esc(f.fact_value || '')}`).join('<br>');
+            const summary = _esc((p.summary_l1 || '').trim() || '(no summary yet)');
+            const disp = _esc(_profileDispositionLine(p));
+            const scope = 'all servers';
+            return `
+                <div class="dc-card" style="margin-bottom:8px">
+                    <div class="dc-row" style="align-items:center">
+                        <div class="dc-row-label">
+                            <label>${_esc(name)} <span class="dc-row-help" style="display:inline;margin-left:8px">${scope}</span></label>
+                            <div class="dc-row-help">@${_esc(p.username || 'unknown')} · ${_esc(p.author_id || '')} · last seen ${_esc(when)}</div>
+                        </div>
+                        <div class="dc-row-control">
+                            <button class="dc-btn dc-btn-sm dc-btn-danger dc-reset-profile-btn"
+                                data-account="${_esc(p.account || '')}"
+                                data-guild-id="${_esc(p.guild_id || '')}"
+                                data-author-id="${_esc(p.author_id || '')}">Reset</button>
+                        </div>
+                    </div>
+                    <div class="dc-row-help" style="margin:2px 0 6px">${summary}</div>
+                    <div class="dc-row-help" style="margin:2px 0 6px"><strong>Disposition:</strong> ${disp}</div>
+                    <div class="dc-row-help" style="margin:2px 0 6px"><strong>Messages/Replies:</strong> ${Number(p.message_count || 0)} / ${Number(p.reply_count || 0)}</div>
+                    <div class="dc-row-help"><strong>Top Facts:</strong><br>${facts || '• none yet'}</div>
+                </div>
+            `;
+        }).join('');
+
+        panel.querySelectorAll('.dc-reset-profile-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const account = btn.dataset.account || '';
+                const guild_id = btn.dataset.guildId || '';
+                const author_id = btn.dataset.authorId || '';
+                if (!account || !author_id) return;
+                if (!window.confirm('Reset this profile and all learned facts?')) return;
+                btn.disabled = true;
+                const old = btn.textContent;
+                btn.textContent = 'Resetting…';
+                try {
+                    const r = await fetch('/api/plugin/leona_discord/profiles/reset', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF() },
+                        body: JSON.stringify({ account, guild_id, author_id }),
+                    });
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    _loadProfiles(container);
+                } catch (e) {
+                    if (status) {
+                        status.textContent = `Reset failed: ${e.message}`;
+                        status.className = 'dc-status dc-status-err';
+                    }
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = old;
+                }
+            });
+        });
+    } catch (e) {
+        panel.innerHTML = `<p class="dc-empty">Failed to load profiles: ${_esc(e.message)}</p>`;
+        if (status) {
+            status.textContent = 'Profile load failed';
+            status.className = 'dc-status dc-status-err';
+        }
     }
 }
 

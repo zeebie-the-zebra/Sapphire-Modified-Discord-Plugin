@@ -403,7 +403,9 @@ Full sleep/wake cycle — stronger than Quiet Hours.
 
 1. **Sleep hour:** `sleep_goodnight` cron (every 15 min) picks a random slot at **:00, :15, :30, or :45** UTC per night. With **Same Time for All Channels** on (default), every target channel uses that one slot; when off, each channel gets its own slot. After the slot, the bot posts **goodnight** and marks the channel **asleep**. Any channel that has not fired by **:45** is caught up on the last cron tick of the hour.
 2. **While asleep:** No replies, reactions, or outreach. **Direct @mentions** are buffered in SQLite — unless **Forced Wake** triggers (below).
-3. **Forced wake (optional):** If **N** direct @mentions arrive within **M** minutes, the bot wakes temporarily: it replies to @mentions with a grumpy “you woke me up” tone (via an injected LLM hint), then goes dormant again after **Stay Awake** minutes. Mentions answered during forced wake are marked processed and are **not** replayed at morning greeting.
+3. **Forced wake (optional):** If **N** direct @mentions arrive within **M** minutes, the bot wakes temporarily: it replies to @mentions with a grumpy “you woke me up” tone (via an injected LLM hint), then goes dormant again after **Stay Awake** minutes. If the LLM returns nothing usable, a short **forced-wake fallback** is posted instead. Mentions answered during forced wake are marked processed and are **not** replayed at morning greeting.
+
+**Test:** **Test forced wake** (Presence → Sleep Schedule) marks channels asleep + forced-awake and queues a synthetic @mention through the Discord Bot Reply task — no need to spam @mentions manually.
 4. **Wake hour** (Morning Greeting local hour): Good morning posts → channel wakes → up to **N** newest buffered @mentions get delayed LLM replies (25–75 s apart). Older buffered mentions are skipped.
 
 **While asleep (including forced-wake window):** outreach is suppressed; presence stays **idle** with activity `sleeping` for any channel still marked asleep in SQLite.
@@ -439,6 +441,7 @@ Proactive conversation starters when channels go quiet.
 - Not in outreach cooldown
 - Not in quiet hours
 - Channel not asleep (sleep schedule)
+- Not during **sleep hours** (UTC sleep hour → wake hour; all outreach channels, including forced-wake windows)
 - Not in greeting window (for greeting-target channels)
 - Passes skip-chance roll
 

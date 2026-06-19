@@ -8,7 +8,11 @@ import re
 from plugins.leona_discord.lib.context_cache import clear_pending_payload, mark_reacted
 from plugins.leona_discord.lib.history import append_bot_reply
 from plugins.leona_discord.lib.mentions import apply_mention_map
-from plugins.leona_discord.lib.messages import BULLET_SPLIT_EACH_CHANCE, split_message
+from plugins.leona_discord.lib.messages import (
+    BULLET_SPLIT_EACH_CHANCE,
+    parse_discord_snowflake,
+    split_message,
+)
 from plugins.leona_discord.lib.reply_style import (
     maybe_append_casual_emoji,
     plan_explicit_edit,
@@ -30,6 +34,78 @@ from plugins.leona_discord.lib.typing_indicator import (
 from plugins.leona_discord.lib import state
 
 logger = logging.getLogger(__name__)
+
+
+_PLACEHOLDER_EMOJI_MAP = {
+    "flame": "🔥",
+    "fire": "🔥",
+    "thumbs up": "👍",
+    "thumbsup": "👍",
+    "thumb up": "👍",
+    "heart": "❤️",
+    "smile": "😊",
+    "grin": "😄",
+    "laugh": "😂",
+    "cry": "😭",
+    "sad": "😢",
+    "eyes": "👀",
+    "sparkles": "✨",
+    "moon": "🌙",
+    "wave": "👋",
+}
+
+
+def _normalize_placeholder_emoji(text: str) -> str:
+    """Convert common LLM emoji placeholders like <flame emoji> to real emoji."""
+    if not text:
+        return text
+
+    def repl(match):
+        inner = (match.group(1) or "").strip().lower()
+        inner = re.sub(r"\s+", " ", inner)
+        inner = inner.replace("emoji:", "").replace("emote:", "").strip()
+        inner = inner.replace(" emoji", "").strip()
+        return _PLACEHOLDER_EMOJI_MAP.get(inner, match.group(0))
+
+    return re.sub(r"<\s*([^<>]{1,40}?)\s*>", repl, text)
+
+
+def _strip_unknown_emoji_placeholders(text: str) -> str:
+    """Remove unresolved angle-bracket emoji placeholders from model output."""
+    if not text:
+        return text
+
+    def repl(match):
+        inner = (match.group(1) or "").strip().lower()
+        if inner.startswith("@") or inner.startswith("#"):
+            return match.group(0)
+        if "emoji" in inner or "emote" in inner:
+            return ""
+        return match.group(0)
+
+    return re.sub(r"<\s*([^<>]{1,60}?)\s*>", repl, text)
+
+
+def _strip_malformed_react_tag(text: str) -> str:
+    """Drop trailing malformed [react:... fragments missing closing bracket."""
+    if not text:
+        return text
+    # Handles cases like "... text [react:👍" at end of output.
+    return re.sub(r"\s*\[react:[^\]\n]{1,64}$", "", text, flags=re.IGNORECASE).rstrip()
+
+
+def _strip_malformed_gif_tag(text: str) -> str:
+    """Drop trailing malformed [gif:... fragments missing closing bracket."""
+    if not text:
+        return text
+    return re.sub(r"\s*\[gif:[^\]\n]{1,120}$", "", text, flags=re.IGNORECASE).rstrip()
+
+
+def _strip_malformed_edit_tag(text: str) -> str:
+    """Drop trailing malformed [edit:... fragments missing closing bracket."""
+    if not text:
+        return text
+    return re.sub(r"\s*\[edit:[^\]\n]{1,1900}$", "", text, flags=re.IGNORECASE).rstrip()
 
 
 def reply_handler(task, event_data: dict, response_text: str):
@@ -73,6 +149,19 @@ def reply_handler(task, event_data: dict, response_text: str):
     clean = response_text.strip()
 
     clean = strip_think_tags(clean)
+    clean = _normalize_placeholder_emoji(clean)
+    clean = _strip_unknown_emoji_placeholders(clean)
+    clean = _strip_malformed_react_tag(clean)
+    clean = _strip_malformed_gif_tag(clean)
+    clean = _strip_malformed_edit_tag(clean)
+
+    from plugins.leona_discord.lib.sleep_forced_wake import (
+        forced_wake_fallback_text,
+        is_forced_wake_event,
+    )
+    from plugins.leona_discord.lib.settings import get_plugin_settings
+
+    forced_wake = is_forced_wake_event(event_data)
 
     react_tags = re.findall(r'\[react:([^\]]{1,64})\]', clean)
     clean = re.sub(r'\[react:[^\]]{1,64}\]', '', clean).strip()
@@ -85,6 +174,13 @@ def reply_handler(task, event_data: dict, response_text: str):
     clean = re.sub(r'\[edit:[^\]]{1,1900}\]', '', clean, flags=re.IGNORECASE).strip()
     inline_edit_text = edit_tags[-1].strip() if edit_tags else ""
 
+    if react_tags or gif_tags or edit_tags:
+        logger.info(
+            "[DISCORD] Parsed inline tags: react=%s gif=%s edit=%s in #%s",
+            len(react_tags), len(gif_tags), len(edit_tags),
+            event_data.get("channel_name", channel_id),
+        )
+
     # --- Multi-message replies: split at [break] markers ---
     # The LLM can include [break] to indicate natural thought boundaries.
     # This produces 1-3 short messages instead of one paragraph.
@@ -93,22 +189,48 @@ def reply_handler(task, event_data: dict, response_text: str):
         break_parts = [clean] if clean else []
 
     if not clean and not inline_gif_query and not react_tags:
-        logger.warning(
-            f"[DISCORD] Empty reply after think-tag strip — raw response was "
-            f"{len(response_text)} chars"
-        )
-        return
+        if forced_wake:
+            clean = forced_wake_fallback_text(get_plugin_settings().get("global", {}) or {})
+            break_parts = [clean] if clean else []
+            logger.info(
+                f"[DISCORD] Forced-wake fallback used in "
+                f"#{event_data.get('channel_name', channel_id)} "
+                f"(LLM reply empty after strip; raw {len(response_text)} chars)"
+            )
+        else:
+            logger.warning(
+                f"[DISCORD] Empty reply after think-tag strip — raw response was "
+                f"{len(response_text)} chars"
+            )
+            return
 
     inline_emoji = None
     if react_tags:
         candidate = react_tags[0].strip()
         from plugins.leona_discord.lib.emoji_policy import emoji_is_allowed
         if not emoji_is_allowed(candidate, get_effective_settings(event_data.get("guild_id", "")), event_data.get("guild_id", "")):
+            logger.info(
+                "[DISCORD] Inline react tag rejected by emoji policy: %r in #%s",
+                candidate,
+                event_data.get("channel_name", channel_id),
+            )
             candidate = ''
         inline_emoji = candidate or None
 
-    if not clean and not inline_gif_query:
-        return
+    if not clean and not inline_gif_query and not inline_emoji:
+        if forced_wake and not react_tags:
+            clean = forced_wake_fallback_text(get_plugin_settings().get("global", {}) or {})
+            break_parts = [clean] if clean else []
+            logger.info(
+                f"[DISCORD] Forced-wake fallback used in "
+                f"#{event_data.get('channel_name', channel_id)} (react-only LLM reply)"
+            )
+        else:
+            logger.info(
+                "[DISCORD] Skipping send: empty text after tag parsing and no inline gif/react in #%s",
+                event_data.get("channel_name", channel_id),
+            )
+            return
 
     mention_map = dict(event_data.get("mention_map", {}))
     guild_id_for_mentions = event_data.get("guild_id", "")
@@ -153,9 +275,12 @@ def reply_handler(task, event_data: dict, response_text: str):
             final_reply_text = clean
 
             # --- Contextual quote-reply ---
-            reply_to = event_data.get("reply_to_message_id") or event_data.get("message_id")
-            reply_id = int(reply_to) if reply_to else None
-            if not should_quote_reply(
+            reply_id = None
+            for key in ("reply_to_message_id", "message_id"):
+                reply_id = parse_discord_snowflake(event_data.get(key))
+                if reply_id:
+                    break
+            if reply_id and not should_quote_reply(
                 event_data,
                 trigger_content,
                 clean,
@@ -263,6 +388,12 @@ def reply_handler(task, event_data: dict, response_text: str):
             return
         history_reply_text = final_reply_text
     else:
+        if inline_emoji and not clean and not chunks:
+            logger.info(
+                "[DISCORD] React-only LLM reply path in #%s (emoji=%s)",
+                event_data.get("channel_name", channel_id),
+                inline_emoji,
+            )
         history_reply_text = clean
 
     clear_pending_payload(channel_key)
@@ -280,10 +411,16 @@ def reply_handler(task, event_data: dict, response_text: str):
         logger.warning(f"[DISCORD] GIF follow-up error: {e}")
 
     if inline_emoji and state._loop and state._loop.is_running():
-        trigger_message_id = event_data.get("message_id", "")
+        trigger_message_id = parse_discord_snowflake(event_data.get("message_id", ""))
         guild_id = event_data.get("guild_id", "")
-        if trigger_message_id and mark_reacted(account, channel_id, trigger_message_id, inline_emoji):
-            async def _fire_inline_react(emoji=inline_emoji, gid=guild_id):
+        if trigger_message_id and mark_reacted(account, channel_id, str(trigger_message_id), inline_emoji):
+            logger.info(
+                "[DISCORD] Applying inline reaction %s to message %s in #%s",
+                inline_emoji,
+                trigger_message_id,
+                event_data.get("channel_name", channel_id),
+            )
+            async def _fire_inline_react(emoji=inline_emoji, gid=guild_id, msg_id=trigger_message_id):
                 try:
                     from plugins.leona_discord.lib.reactions import add_reaction_humanized
                     client_ref = state._clients.get(account)
@@ -292,7 +429,7 @@ def reply_handler(task, event_data: dict, response_text: str):
                     ch = client_ref.get_channel(int(channel_id))
                     if not ch:
                         ch = await client_ref.fetch_channel(int(channel_id))
-                    msg = await ch.fetch_message(int(trigger_message_id))
+                    msg = await ch.fetch_message(msg_id)
                     await add_reaction_humanized(
                         msg, account, gid, emoji, str(channel_id),
                     )
@@ -300,6 +437,17 @@ def reply_handler(task, event_data: dict, response_text: str):
                     logger.debug(f"[DISCORD] Inline react failed: {e}")
 
             asyncio.run_coroutine_threadsafe(_fire_inline_react(), state._loop)
+        elif not trigger_message_id:
+            logger.info(
+                "[DISCORD] Inline reaction skipped: invalid/non-snowflake trigger message id %r",
+                event_data.get("message_id", ""),
+            )
+        else:
+            logger.info(
+                "[DISCORD] Inline reaction skipped: already reacted to message %s in #%s",
+                trigger_message_id,
+                event_data.get("channel_name", channel_id),
+            )
 
     client = state._clients.get(account)
     bot_display = client.user.display_name if (client and client.is_ready()) else account
@@ -311,3 +459,14 @@ def reply_handler(task, event_data: dict, response_text: str):
         guild_name=event_data.get("guild_name", ""),
         channel_name=event_data.get("channel_name", ""),
     )
+
+    try:
+        from plugins.leona_discord.lib import profile as user_profile
+        user_profile.record_bot_reply(
+            account,
+            event_data.get("guild_id", ""),
+            event_data.get("author_id", ""),
+            is_dm=bool(event_data.get("is_dm")),
+        )
+    except Exception:
+        pass

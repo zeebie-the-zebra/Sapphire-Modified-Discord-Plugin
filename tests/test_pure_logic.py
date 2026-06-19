@@ -61,6 +61,21 @@ class TestStripThinkTags:
 
 # ── messages.split_message ────────────────────────────────────────────────
 
+class TestParseDiscordSnowflake:
+    def test_accepts_numeric_ids(self):
+        from plugins.leona_discord.lib.messages import parse_discord_snowflake
+
+        assert parse_discord_snowflake("1233723836453748786") == 1233723836453748786
+        assert parse_discord_snowflake(123) == 123
+
+    def test_rejects_synthetic_ids(self):
+        from plugins.leona_discord.lib.messages import parse_discord_snowflake
+
+        assert parse_discord_snowflake("test-forced-wake-1781653196-6806011d") is None
+        assert parse_discord_snowflake("") is None
+        assert parse_discord_snowflake(None) is None
+
+
 class TestSplitMessage:
     def test_short_message_no_split(self):
         from plugins.leona_discord.lib.messages import split_message
@@ -796,6 +811,17 @@ class TestBotIdentity:
         assert fixed.startswith("Morning")
         assert "hope your night shift" in fixed
 
+    def test_bot_display_name_prefers_client_user(self):
+        from plugins.leona_discord.lib.bot_identity import bot_display_name
+
+        assert bot_display_name(account="x") == "the bot"
+        client = type("C", (), {"user": type("U", (), {
+            "global_name": None,
+            "display_name": "Remmi",
+            "name": "remmi_bot",
+        })()})()
+        assert bot_display_name(client=client, account="x") == "Remmi"
+
 
 class TestProactiveHistory:
     def test_bot_lines_labeled_you(self):
@@ -824,6 +850,46 @@ class TestProactiveHistory:
 
 
 class TestSleepSchedule:
+    def test_in_sleep_hours_overnight_window(self):
+        from datetime import datetime, timezone
+        from plugins.leona_discord.lib.sleep_schedule import in_sleep_hours
+
+        g = {
+            "sleep_schedule_enabled": True,
+            "sleep_utc_hour": 22,
+            "greeting_utc_hour": 9,
+        }
+        assert not in_sleep_hours(g, datetime(2026, 6, 15, 21, 59, tzinfo=timezone.utc))
+        assert in_sleep_hours(g, datetime(2026, 6, 15, 22, 0, tzinfo=timezone.utc))
+        assert in_sleep_hours(g, datetime(2026, 6, 16, 3, 0, tzinfo=timezone.utc))
+        assert in_sleep_hours(g, datetime(2026, 6, 16, 8, 59, tzinfo=timezone.utc))
+        assert not in_sleep_hours(g, datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc))
+
+    def test_outreach_skip_reason_for_sleep_hours_and_channel(self):
+        from datetime import datetime, timezone
+        from plugins.leona_discord.lib.sleep_schedule import (
+            enter_sleep,
+            outreach_skip_reason_for_sleep,
+        )
+
+        raw = {
+            "global": {
+                "sleep_schedule_enabled": True,
+                "sleep_utc_hour": 22,
+                "greeting_utc_hour": 9,
+            }
+        }
+        now_sleep = datetime(2026, 6, 15, 23, 0, tzinfo=timezone.utc)
+        assert "sleep hours" in outreach_skip_reason_for_sleep(
+            raw, "acct", "chan", now=now_sleep,
+        )
+
+        now_wake = datetime(2026, 6, 16, 9, 30, tzinfo=timezone.utc)
+        enter_sleep("acct", "chan2")
+        assert outreach_skip_reason_for_sleep(
+            raw, "acct", "chan2", now=now_wake,
+        ) == "channel asleep (sleep schedule)"
+
     def test_goodnight_due_random_minute(self, monkeypatch):
         from datetime import datetime, timezone
         from plugins.leona_discord.lib import sleep_schedule
@@ -950,6 +1016,22 @@ class TestForcedWake:
         assert not is_forced_awake("fw2", "ch2")
 
 
+class TestForcedWakeReply:
+    def test_is_forced_wake_event(self):
+        from plugins.leona_discord.lib.sleep_forced_wake import is_forced_wake_event
+
+        assert is_forced_wake_event({"sleep_forced_wake": True})
+        assert is_forced_wake_event({"sleep_forced_wake": "true"})
+        assert not is_forced_wake_event({})
+        assert not is_forced_wake_event({"sleep_forced_wake": False})
+
+    def test_forced_wake_fallback_text(self):
+        from plugins.leona_discord.lib.sleep_forced_wake import forced_wake_fallback_text
+
+        assert "woke me up" in forced_wake_fallback_text({}).lower()
+        assert forced_wake_fallback_text({"sleep_forced_wake_fallback": "Hey!"}) == "Hey!"
+
+
 class TestPickGifDescribeFrame:
     def test_prefers_middle_frame(self):
         from plugins.leona_discord.lib.images import _pick_gif_describe_frame
@@ -957,3 +1039,146 @@ class TestPickGifDescribeFrame:
         frames = [(b"a", "image/png"), (b"b", "image/png"), (b"c", "image/png")]
         out, mt = _pick_gif_describe_frame(frames)
         assert out == b"b" and mt == "image/png"
+
+
+class TestUserProfiling:
+    def test_familiarity_label(self):
+        from plugins.leona_discord.lib.profile import familiarity_label
+
+        assert familiarity_label(0) == "new here"
+        assert familiarity_label(10) == "occasional"
+        assert familiarity_label(30) == "regular"
+        assert familiarity_label(80) == "familiar regular"
+
+    def test_disposition_phrases_warm(self):
+        from plugins.leona_discord.lib.profile import disposition_phrases
+
+        phrases = disposition_phrases({"warmth": 0.8, "trust": 0.7, "interest": 0.5})
+        assert "warm" in phrases
+
+    def test_apply_profile_engagement_disabled(self):
+        from plugins.leona_discord.lib.profile import apply_profile_engagement
+
+        settings = {"human_response_chance": 20}
+        out = apply_profile_engagement(settings, "acct", "guild", "123", is_dm=False)
+        assert out["human_response_chance"] == 20
+
+    def test_recall_empty_when_disabled(self):
+        from plugins.leona_discord.lib.profile import recall_user_context
+
+        assert recall_user_context("a", "g", "1", "hello") == ""
+
+    def test_profile_guild_is_global(self):
+        from plugins.leona_discord.lib.profile_store import GLOBAL_PROFILE_GUILD, _profile_guild
+
+        assert _profile_guild("1233663893692350485") == GLOBAL_PROFILE_GUILD
+        assert _profile_guild("") == GLOBAL_PROFILE_GUILD
+
+    def test_merge_profile_rows_combines_guilds(self):
+        from plugins.leona_discord.lib.profile_store import _merge_profile_rows
+
+        merged = _merge_profile_rows([
+            {
+                "account": "acct",
+                "guild_id": "guild-a",
+                "author_id": "135957860654776321",
+                "username": "zeebie",
+                "display_name": "Zeebie",
+                "first_seen_at": 100.0,
+                "last_seen_at": 200.0,
+                "message_count": 13,
+                "reply_count": 11,
+                "avg_message_length": 80.0,
+                "preferred_hour_utc": 20,
+                "topics_positive": "{}",
+                "topics_negative": "{}",
+                "communication_style": "",
+                "summary_l1": "Developer profile",
+                "summary_l2": "",
+                "summary_updated_at": 150.0,
+                "familiarity": 0.24,
+                "warmth": 0.55,
+                "trust": 0.58,
+                "playfulness": 0.53,
+                "patience": 0.70,
+                "interest": 0.74,
+            },
+            {
+                "account": "acct",
+                "guild_id": "guild-b",
+                "author_id": "135957860654776321",
+                "username": "zeebie",
+                "display_name": "Zeebie",
+                "first_seen_at": 300.0,
+                "last_seen_at": 400.0,
+                "message_count": 1,
+                "reply_count": 0,
+                "avg_message_length": 40.0,
+                "preferred_hour_utc": 21,
+                "topics_positive": "{}",
+                "topics_negative": "{}",
+                "communication_style": "",
+                "summary_l1": "",
+                "summary_l2": "",
+                "summary_updated_at": 0.0,
+                "familiarity": 0.10,
+                "warmth": 0.50,
+                "trust": 0.50,
+                "playfulness": 0.50,
+                "patience": 0.70,
+                "interest": 0.49,
+            },
+        ])
+        assert merged["guild_id"] == ""
+        assert merged["message_count"] == 14
+        assert merged["reply_count"] == 11
+        assert merged["summary_l1"] == "Developer profile"
+        assert merged["last_seen_at"] == 400.0
+        assert merged["first_seen_at"] == 100.0
+
+
+class TestReplyEmojiPlaceholderSanitize:
+    def test_converts_flame_placeholder(self):
+        from plugins.leona_discord.handlers.reply_handler import _normalize_placeholder_emoji
+
+        assert _normalize_placeholder_emoji("<flame emoji>") == "🔥"
+
+    def test_strips_unknown_emoji_placeholder(self):
+        from plugins.leona_discord.handlers.reply_handler import _strip_unknown_emoji_placeholders
+
+        assert _strip_unknown_emoji_placeholders("nice <mystery emoji>") == "nice "
+
+    def test_strips_malformed_react_trailer(self):
+        from plugins.leona_discord.handlers.reply_handler import _strip_malformed_react_tag
+
+        text = "ahh gotcha — lil self-contained bot brain 🌙[react:👍"
+        assert _strip_malformed_react_tag(text) == "ahh gotcha — lil self-contained bot brain 🌙"
+
+    def test_strips_malformed_gif_trailer(self):
+        from plugins.leona_discord.handlers.reply_handler import _strip_malformed_gif_tag
+
+        text = "nice one [gif:funny cat"
+        assert _strip_malformed_gif_tag(text) == "nice one"
+
+    def test_strips_malformed_edit_trailer(self):
+        from plugins.leona_discord.handlers.reply_handler import _strip_malformed_edit_tag
+
+        text = "ok cool [edit:actually make that tomorrow"
+        assert _strip_malformed_edit_tag(text) == "ok cool"
+
+
+class TestProfileDistillJsonRepair:
+    def test_parse_json_with_trailing_comma(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _parse_json_with_repair
+
+        raw = '{"facts_add":[{"category":"preference","key":"tone","value":"likes concise replies","confidence":0.8},],"disposition_delta":{"interest":0.02},}'
+        data = _parse_json_with_repair(raw)
+        assert isinstance(data, dict)
+        assert "facts_add" in data
+
+    def test_parse_json_fenced_block(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _parse_json_with_repair
+
+        raw = "```json\n{\"facts_add\":[],\"disposition_delta\":{}}\n```"
+        data = _parse_json_with_repair(raw)
+        assert data.get("facts_add") == []

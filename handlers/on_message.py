@@ -131,10 +131,26 @@ def register_on_message(client, account_name: str):
                 "author_id": author_id,
                 "mentioned": str(mentioned),
                 "image_urls": image_urls,
+                "sleep_forced_wake": True,
             }
 
             append_message(channel_key, msg_data, guild_id=guild_id)
             record_message(channel_key)
+
+            from plugins.leona_discord.lib import profile as user_profile
+            user_profile.record_user_message(
+                account_name,
+                guild_id,
+                author_id,
+                username=message.author.name,
+                display_name=message.author.display_name,
+                content=raw_content,
+                is_dm=is_dm,
+                is_bot=message.author.bot,
+                message_id=str(message.id),
+                thread_reply_to_bot=True,
+                mentioned=True,
+            )
 
             if trace:
                 trace.gate("persisted_history", True)
@@ -161,6 +177,24 @@ def register_on_message(client, account_name: str):
         append_message(channel_key, msg_data, guild_id=guild_id)
         record_message(channel_key)
 
+        from plugins.leona_discord.lib import profile as user_profile
+        from plugins.leona_discord.lib.engagement import is_reply_to_bot_message
+
+        thread_reply = await is_reply_to_bot_message(message, client)
+        user_profile.record_user_message(
+            account_name,
+            guild_id,
+            author_id,
+            username=message.author.name,
+            display_name=message.author.display_name,
+            content=message.clean_content or "",
+            is_dm=is_dm,
+            is_bot=message.author.bot,
+            message_id=str(message.id),
+            thread_reply_to_bot=thread_reply,
+            mentioned=mentioned,
+        )
+
         if trace:
             trace.gate("persisted_history", True)
 
@@ -170,12 +204,10 @@ def register_on_message(client, account_name: str):
         from plugins.leona_discord.lib.cooldowns import engagement_boost
         from plugins.leona_discord.lib.engagement import (
             apply_engagement_adjustments,
-            is_reply_to_bot_message,
             record_topics_skipped,
         )
 
         effective = engagement_boost(effective, account_name, channel_id_str)
-        thread_reply = await is_reply_to_bot_message(message, client)
         if trace and thread_reply:
             trace.gate("thread_reply", True, "reply to bot message")
         effective = apply_engagement_adjustments(
@@ -183,6 +215,13 @@ def register_on_message(client, account_name: str):
             channel_key=channel_key,
             message_content=message.clean_content or "",
             is_thread_reply=thread_reply,
+        )
+        effective = user_profile.apply_profile_engagement(
+            effective,
+            account_name,
+            guild_id,
+            author_id,
+            is_dm=is_dm,
         )
 
         scope = effective.get("cooldown_scope", "per_channel")
@@ -210,6 +249,9 @@ def register_on_message(client, account_name: str):
             )
             if organic_human_drop:
                 record_topics_skipped(channel_key, message.clean_content or "")
+                user_profile.record_outcome(
+                    account_name, guild_id, author_id, "ignored", is_dm=is_dm,
+                )
             if trace:
                 trace.finish(outcome or "dropped")
             return
@@ -219,6 +261,9 @@ def register_on_message(client, account_name: str):
         if organic and gates.should_read_only_react():
             await try_silent_react(
                 message, account_name, effective, guild_id=guild_id, force=True,
+            )
+            user_profile.record_outcome(
+                account_name, guild_id, author_id, "react_only", is_dm=is_dm,
             )
             if trace:
                 trace.gate("read_only_react", True)

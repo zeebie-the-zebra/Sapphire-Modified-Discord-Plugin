@@ -8,6 +8,18 @@ from plugins.leona_discord.lib.constants import DISCORD_MSG_LIMIT
 # Chance each bullet line becomes its own Discord message (else the full list stays together).
 BULLET_SPLIT_EACH_CHANCE = 0.30
 
+
+def parse_discord_snowflake(value) -> int | None:
+    """Return an integer message ID if value is a Discord snowflake string."""
+    text = str(value or "").strip()
+    if not text.isdigit():
+        return None
+    try:
+        return int(text)
+    except (ValueError, OverflowError):
+        return None
+
+
 _BULLET_LINE_RE = re.compile(r"^\s*([-*•]|\d+\.)\s+")
 _EMOJI_LEAD_RE = re.compile(
     r"^([\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+)\s+(.+)$",

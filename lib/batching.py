@@ -32,6 +32,7 @@ from plugins.leona_discord.lib.images import (
     _attachment_kind,
 )
 from plugins.leona_discord.lib import memory
+from plugins.leona_discord.lib import profile
 from plugins.leona_discord.lib.engagement import reply_length_hint
 from plugins.leona_discord.lib.edit_history import build_edit_awareness_hint, build_message_edit_hint
 from plugins.leona_discord.lib.reactions import build_reaction_hint
@@ -311,6 +312,20 @@ def flush_batch(batch: MessageBatch):
     if memory_context:
         combined_content = f"{memory_context}\n\n{combined_content}"
 
+    last_author = last.get("author_id", "")
+    profile_context = profile.recall_user_context(
+        batch.account,
+        batch.guild_id,
+        last_author,
+        combined_content,
+        username=last.get("username", ""),
+        display_name=last.get("display_name", ""),
+        is_dm=batch.is_dm,
+        mentioned=str(last.get("mentioned", "")).lower() == "true",
+    )
+    if profile_context:
+        combined_content = f"{profile_context}\n\n{combined_content}"
+
     if reaction_hint:
         combined_content = f"{combined_content}\n\n{reaction_hint}"
 
@@ -346,11 +361,15 @@ def flush_batch(batch: MessageBatch):
         "history_size": len(full_history),
         "mention_map": mention_map,
         "memory_context": bool(memory_context),
+        "profile_context": bool(profile_context),
         "image_urls": image_urls,
         "image_described": image_described,
         "images": event_images,
         "reply_to_message_id": last["message_id"],
     }
+
+    if any(m.get("sleep_forced_wake") for m in messages_to_send):
+        payload["sleep_forced_wake"] = True
 
     from plugins.leona_discord.lib.bot_identity import enrich_payload_with_bot_identity
     enrich_payload_with_bot_identity(payload)

@@ -120,6 +120,8 @@ def init_db():
                 ON sleep_mention_buffer(account, channel_id, processed, created_at DESC);
         """)
         _migrate_sleep_state(conn)
+        from plugins.leona_discord.lib.profile_store import ensure_profile_tables
+        ensure_profile_tables(conn)
         conn.commit()
         _conn = conn
         logger.info(f"[LEONA-DISCORD] Memory store opened at {path}")
@@ -137,6 +139,11 @@ def _db() -> sqlite3.Connection:
     if _conn is None:
         init_db()
     return _conn
+
+
+def connection() -> sqlite3.Connection:
+    """Public accessor for the shared SQLite connection (profile store, etc.)."""
+    return _db()
 
 
 def save_message(account: str, guild_id: str, channel_id: str, msg_data: dict):
@@ -769,3 +776,26 @@ def pinned_count(account: str = "") -> int:
         else:
             row = conn.execute("SELECT COUNT(*) AS c FROM pinned_memories").fetchone()
     return int(row["c"]) if row else 0
+
+
+def fetch_user_messages(
+    account: str,
+    guild_id: str,
+    author_id: str,
+    *,
+    limit: int = 30,
+) -> list:
+    """Recent messages from a user across all guilds/DMs (for profile distillation)."""
+    with _lock:
+        conn = _db()
+        rows = conn.execute(
+            """
+            SELECT guild_id, channel_id, content, username, display_name, created_at
+            FROM channel_messages
+            WHERE account = ? AND author_id = ? AND is_bot = 0
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (account, str(author_id), max(1, min(100, int(limit)))),
+        ).fetchall()
+    return [dict(r) for r in rows]

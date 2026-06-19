@@ -88,7 +88,7 @@ def recall_context(account: str, guild_id: str, channel_id: str,
 def get_stats() -> dict:
     from plugins.leona_discord.lib.paths import get_data_dir, get_sqlite_path
     sqlite_store.init_db()
-    return {
+    stats = {
         "backend": "sqlite",
         "self_contained": True,
         "message_count": sqlite_store.message_count(),
@@ -96,3 +96,9 @@ def get_stats() -> dict:
         "data_dir": str(get_data_dir()),
         "sqlite_path": str(get_sqlite_path()),
     }
+    try:
+        from plugins.leona_discord.lib import profile
+        stats["profiling"] = profile.get_stats()
+    except Exception:
+        stats["profiling"] = {}
+    return stats

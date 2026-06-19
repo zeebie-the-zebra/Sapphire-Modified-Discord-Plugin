@@ -25,6 +25,10 @@ _INT_FIELDS = {
     "reaction_cooldown_seconds": (0, 600),
     "image_model_max_tokens": (50, 2000),
     "memory_max_tokens": (100, 1200),
+    "profiling_min_messages": (1, 100),
+    "profiling_max_tokens": (80, 800),
+    "profiling_distill_max_tokens": (120, 800),
+    "profiling_distill_interval_minutes": (1, 60),
     "history_inject_limit": (5, 100),
     "history_line_max_chars": (80, 1000),
     "quiet_hours_start": (0, 23),
@@ -54,6 +58,8 @@ _INT_FIELDS = {
 _FLOAT_FIELDS = {
     "memory_search_threshold": (0.0, 1.0),
     "activity_decay_multiplier": (0.0, 1.0),
+    "profiling_imperfect_recall_chance": (0.0, 0.5),
+    "profiling_fact_confidence_min": (0.0, 1.0),
 }
 _BOOL_FIELDS = [
     "name_match_enabled",
@@ -64,6 +70,11 @@ _BOOL_FIELDS = [
     "image_enabled",
     "append_to_user_message_enabled",
     "memory_enabled",
+    "profiling_enabled",
+    "profiling_dm_only",
+    "profiling_use_llm",
+    "profiling_modulate_reply_chance",
+    "profiling_imperfect_recall",
     "ignore_bots",
     "quiet_hours_enabled",
     "activity_decay_enabled",
@@ -160,10 +171,16 @@ def _apply_message_settings(body: dict, target: dict):
             pass
     if "append_to_user_message" in body:
         target["append_to_user_message"] = str(body["append_to_user_message"]).strip()[:2000]
+    if "profiling_model_provider" in body:
+        target["profiling_model_provider"] = str(body["profiling_model_provider"]).strip()
+    if "profiling_model_name" in body:
+        target["profiling_model_name"] = str(body["profiling_model_name"]).strip()
     if "greeting_message" in body:
         target["greeting_message"] = str(body["greeting_message"]).strip()[:2000]
     if "sleep_message" in body:
         target["sleep_message"] = str(body["sleep_message"]).strip()[:2000]
+    if "sleep_forced_wake_fallback" in body:
+        target["sleep_forced_wake_fallback"] = str(body["sleep_forced_wake_fallback"]).strip()[:500]
 
 
 def _apply_top_level_settings(body: dict, stored: dict):
@@ -252,6 +269,10 @@ async def get_settings(**kwargs):
         "sleep_forced_wake_mention_count": global_s.get("sleep_forced_wake_mention_count", 3),
         "sleep_forced_wake_window_minutes": global_s.get("sleep_forced_wake_window_minutes", 15),
         "sleep_forced_wake_duration_minutes": global_s.get("sleep_forced_wake_duration_minutes", 30),
+        "sleep_forced_wake_fallback": global_s.get(
+            "sleep_forced_wake_fallback",
+            "Ugh, seriously? You woke me up… what do you want? 😴",
+        ),
         "outreach_enabled": global_s.get("outreach_enabled", False),
         "outreach_quiet_minutes": global_s.get("outreach_quiet_minutes", 240),
         "outreach_cooldown_hours": global_s.get("outreach_cooldown_hours", 8),
@@ -463,6 +484,51 @@ async def test_greeting(**kwargs):
         return {"success": False, "error": summary, "message": summary}
 
     sent_ok = summary.startswith("Sent ") and not summary.startswith("Sent 0 ")
+    return {"success": sent_ok, "message": summary}
+
+
+_FORCED_WAKE_TEST_KEYS = (
+    "sleep_forced_wake_enabled",
+    "sleep_forced_wake_mention_count",
+    "sleep_forced_wake_window_minutes",
+    "sleep_forced_wake_duration_minutes",
+    "sleep_forced_wake_fallback",
+    "sleep_use_greeting_targets",
+    "greeting_targets",
+    "sleep_targets",
+)
+
+
+async def test_forced_wake(**kwargs):
+    """POST /api/plugin/leona_discord/sleep/forced-wake/test — queue forced-wake reply now."""
+    body = kwargs.get("body") or {}
+
+    raw = dict(_get_state().get("settings", {}) or {})
+    g = dict(raw.get("global", {}) or {})
+    for key in _FORCED_WAKE_TEST_KEYS:
+        if key in body:
+            g[key] = body[key]
+    raw["global"] = g
+
+    if g.get("sleep_use_greeting_targets", True):
+        targets = g.get("greeting_targets") or []
+    else:
+        targets = g.get("sleep_targets") or []
+    if not isinstance(targets, list) or not targets:
+        return {"success": False, "error": "No sleep/greeting channels selected"}
+
+    try:
+        from plugins.leona_discord.schedule.forced_wake_test import run_forced_wake_test
+
+        summary = run_forced_wake_test(raw, test=True)
+    except Exception as e:
+        logger.error(f"[LEONA-DISCORD] Forced-wake test failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+    if summary.startswith("Skipped"):
+        return {"success": False, "error": summary, "message": summary}
+
+    sent_ok = summary.startswith("Queued ") and "Queued forced-wake test reply for 0" not in summary
     return {"success": sent_ok, "message": summary}
 
 

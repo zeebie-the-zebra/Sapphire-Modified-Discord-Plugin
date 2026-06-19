@@ -17,6 +17,23 @@ _STILL_AWAKE_HINT = (
     "You may grumble lightly, but answer the message.]"
 )
 
+_FORCED_WAKE_FALLBACK = (
+    "Ugh, seriously? You woke me up… what do you want? 😴"
+)
+
+
+def forced_wake_fallback_text(global_s: dict = None) -> str:
+    g = global_s or {}
+    return str(
+        g.get("sleep_forced_wake_fallback") or _FORCED_WAKE_FALLBACK
+    ).strip()
+
+
+def is_forced_wake_event(event_data: dict) -> bool:
+    if not event_data:
+        return False
+    return str(event_data.get("sleep_forced_wake", "")).lower() in ("true", "1", "yes")
+
 
 def is_forced_wake_enabled(global_s: dict) -> bool:
     g = global_s or {}
