@@ -453,6 +453,7 @@ const _CSS = `
     background: rgba(67,181,129,0.18); color: var(--success, #43b581); margin-left: 6px;
 }
 .dc-debug-badge.pending { background: rgba(250,166,26,0.15); color: #faa61a; }
+.dc-debug-badge.edit { background: rgba(114,137,218,0.18); color: #7289da; }
 `;
 
 function _injectCSS() {
@@ -3531,6 +3532,52 @@ function _llmDebugSection(title, text) {
 }
 
 
+function _llmDebugPostSendEditKindLabel(kind) {
+    const labels = {
+        auto_typo: 'Auto typo',
+        llm_edit: 'LLM [edit:]',
+        random_typo: 'Random typo',
+        random_thought: 'Random thought',
+    };
+    return labels[kind] || kind || 'Post-send edit';
+}
+
+
+function _llmDebugPostSendEditSection(edit) {
+    if (!edit || !edit.kind) return '';
+    const label = _llmDebugPostSendEditKindLabel(edit.kind);
+    const plannedAt = edit.planned_at
+        ? new Date(edit.planned_at * 1000).toLocaleString()
+        : 'unknown';
+    const appliedAt = edit.applied_at
+        ? new Date(edit.applied_at * 1000).toLocaleString()
+        : '';
+    const delay = typeof edit.delay_secs === 'number' ? `${edit.delay_secs}s` : '?';
+    let status = 'pending correction';
+    if (edit.applied) status = 'corrected';
+    else if (edit.error) status = `failed: ${edit.error}`;
+    const meta = [
+        label,
+        `sent ${plannedAt}`,
+        `delay ${delay}`,
+        appliedAt ? `corrected ${appliedAt}` : status,
+        edit.discord_message_id ? `msg ${edit.discord_message_id}` : '',
+    ].filter(Boolean).join(' · ');
+    const body = [
+        `Status: ${status}`,
+        '',
+        'Sent to Discord (typo / draft):',
+        edit.sent_text || '',
+        '',
+        'Corrected to:',
+        edit.corrected_text || '',
+    ].join('\n');
+    return `<div class="dc-debug-section"><h4>Post-send edit · ${_esc(label)}</h4>`
+        + `<div class="dc-row-help" style="margin:0 0 6px">${_esc(meta)}</div>`
+        + `<pre class="dc-debug-pre">${_esc(body)}</pre></div>`;
+}
+
+
 function _renderLlmDebugDetail(log) {
     if (!log) return '<p class="dc-empty">Select an exchange to inspect.</p>';
     const when = log.ts ? new Date(log.ts * 1000).toLocaleString() : 'unknown';
@@ -3542,6 +3589,7 @@ function _renderLlmDebugDetail(log) {
         flags.slash_command ? `/${flags.slash_command}` : '',
         `batch×${flags.batch_size ?? 1}`,
         `hist ${flags.history_size ?? 0}`,
+        flags.post_send_edit?.kind ? _llmDebugPostSendEditKindLabel(flags.post_send_edit.kind).toLowerCase() : '',
     ].filter(Boolean).join(' · ');
     const historyText = (log.recent_history || []).map(line => `  ${line}`).join('\n');
     const meta = [
@@ -3573,6 +3621,7 @@ function _renderLlmDebugDetail(log) {
         ${_llmDebugSection('LLM response (raw)', log.response_raw)}
         ${_llmDebugSection('LLM response (cleaned for Discord)', log.response_clean || (hasResponse ? '' : '(no response captured yet)'))}
         ${sentViaTool}
+        ${_llmDebugPostSendEditSection(flags.post_send_edit)}
     `;
 }
 
@@ -3582,13 +3631,17 @@ function _renderLlmDebugModalBody() {
         ? _llmDebugLogsCache.map(log => {
             const when = log.ts ? new Date(log.ts * 1000).toLocaleString() : '';
             const hasResponse = !!(log.response_raw || log.response_clean);
+            const editKind = log.flags?.post_send_edit?.kind;
+            const editBadge = editKind
+                ? `<span class="dc-debug-badge edit">${_esc(_llmDebugPostSendEditKindLabel(editKind))}</span>`
+                : '';
             const badge = hasResponse
                 ? '<span class="dc-debug-badge">response</span>'
                 : '<span class="dc-debug-badge pending">pending</span>';
             const selected = log.id === _llmDebugSelectedId ? ' selected' : '';
             const preview = (log.trigger_content || log.formatted_prompt || '').replace(/\s+/g, ' ').slice(0, 90);
             return `<div class="dc-debug-list-item${selected}" data-log-id="${log.id}">
-                <div><strong>#${_esc(log.channel_name || log.channel_id || '?')}</strong> · ${_esc(log.username || '?')} ${badge}</div>
+                <div><strong>#${_esc(log.channel_name || log.channel_id || '?')}</strong> · ${_esc(log.username || '?')} ${badge}${editBadge}</div>
                 <div class="dc-row-help" style="margin:2px 0 0">${_esc(when)} · ${_esc(preview || '(no preview)')}${preview.length >= 90 ? '…' : ''}</div>
             </div>`;
         }).join('')

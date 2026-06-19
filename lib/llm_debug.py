@@ -208,6 +208,90 @@ def record_response(
         logger.debug("[LEONA-DISCORD] llm_debug record_response failed: %s", e)
 
 
+def _find_log_row_id(conn, account: str, channel_id: str, message_id: str):
+    if message_id:
+        row = conn.execute(
+            """
+            SELECT id FROM llm_debug_logs
+            WHERE account = ? AND channel_id = ? AND message_id = ?
+            ORDER BY ts DESC LIMIT 1
+            """,
+            (account, channel_id, message_id),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+    row = conn.execute(
+        """
+        SELECT id FROM llm_debug_logs
+        WHERE account = ? AND channel_id = ?
+        ORDER BY ts DESC LIMIT 1
+        """,
+        (account, channel_id),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def record_post_send_edit(
+    event_data: dict,
+    *,
+    kind: str,
+    sent_text: str,
+    corrected_text: str,
+    delay_secs: float = 0,
+    discord_message_id: str = "",
+    applied: bool = False,
+    error: str = "",
+) -> None:
+    """Attach post-send edit details (auto typo, LLM [edit:], random edit) to the debug log row."""
+    if not _enabled() or not event_data or not kind:
+        return
+    account = event_data.get("account", "")
+    channel_id = event_data.get("channel_id", "")
+    message_id = str(event_data.get("message_id", ""))
+    if not account or not channel_id:
+        return
+    try:
+        init_db()
+        now = time.time()
+        with _lock:
+            conn = connection()
+            row_id = _find_log_row_id(conn, account, str(channel_id), message_id)
+            if not row_id:
+                return
+            row = conn.execute(
+                "SELECT flags FROM llm_debug_logs WHERE id = ?",
+                (row_id,),
+            ).fetchone()
+            flags = {}
+            if row:
+                try:
+                    flags = json.loads(row["flags"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    flags = {}
+            existing = flags.get("post_send_edit") or {}
+            payload = {
+                "kind": (kind or "")[:40],
+                "sent_text": _clip(sent_text or "", 8000),
+                "corrected_text": _clip(corrected_text or "", 8000),
+                "delay_secs": round(float(delay_secs or 0), 2),
+                "discord_message_id": str(discord_message_id or existing.get("discord_message_id", "")),
+                "planned_at": existing.get("planned_at") or (now if not applied else max(0, now - float(delay_secs or 0))),
+                "applied": bool(applied),
+                "applied_at": now if applied else int(existing.get("applied_at") or 0),
+                "error": _clip(error or "", 500) if error else existing.get("error", ""),
+            }
+            if not applied and not existing.get("planned_at"):
+                payload["planned_at"] = now
+            flags["post_send_edit"] = payload
+            conn.execute(
+                "UPDATE llm_debug_logs SET flags = ? WHERE id = ?",
+                (json.dumps(flags), row_id),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.debug("[LEONA-DISCORD] llm_debug record_post_send_edit failed: %s", e)
+
+
 def list_logs(*, limit: int = 25, channel_id: str = "") -> list:
     init_db()
     lim = max(1, min(100, int(limit)))

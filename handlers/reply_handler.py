@@ -219,10 +219,13 @@ def reply_handler(task, event_data: dict, response_text: str):
 
     edit_chunk_idx = None
     edit_plan = None
+    post_send_edit_kind = None
     if inline_edit_text and edits_enabled and chunks:
         edit_chunk_idx = 0 if len(chunks) == 1 else len(chunks) - 1
         edit_plan = plan_explicit_edit(chunks[edit_chunk_idx], inline_edit_text)
-        if not edit_plan:
+        if edit_plan:
+            post_send_edit_kind = "llm_edit"
+        else:
             edit_chunk_idx = None
 
     if not state._loop or not state._loop.is_running():
@@ -252,8 +255,17 @@ def reply_handler(task, event_data: dict, response_text: str):
             if not edit_plan and edits_enabled and len(chunks) == 1 and not inline_edit_text:
                 from plugins.leona_discord.lib.auto_typo import plan_auto_typo
                 edit_plan = plan_auto_typo(chunks[0], effective, trigger_content)
-                if not edit_plan:
+                if edit_plan:
+                    post_send_edit_kind = "auto_typo"
+                else:
                     edit_plan = plan_post_send_edit(chunks[0])
+                    if edit_plan:
+                        _d, _s, _e = edit_plan
+                        post_send_edit_kind = (
+                            "random_thought"
+                            if _e.startswith(_s.rstrip()) and len(_e) > len(_s)
+                            else "random_typo"
+                        )
                 if edit_plan:
                     edit_chunk_idx = 0
 
@@ -296,6 +308,20 @@ def reply_handler(task, event_data: dict, response_text: str):
                 edit_msg_id = sent_message_ids.get(edit_chunk_idx)
                 if edit_msg_id:
                     delay, sent_text, edited_text = edit_plan
+                    if post_send_edit_kind:
+                        try:
+                            from plugins.leona_discord.lib import llm_debug
+                            llm_debug.record_post_send_edit(
+                                event_data,
+                                kind=post_send_edit_kind,
+                                sent_text=sent_text,
+                                corrected_text=edited_text,
+                                delay_secs=delay,
+                                discord_message_id=str(edit_msg_id),
+                                applied=False,
+                            )
+                        except Exception:
+                            pass
                     _time.sleep(delay)
                     try:
                         edit_future = asyncio.run_coroutine_threadsafe(
@@ -328,8 +354,37 @@ def reply_handler(task, event_data: dict, response_text: str):
                             f"in #{event_data.get('channel_name', channel_id)}"
                             f"{' (LLM)' if inline_edit_text else ''}"
                         )
+                        if post_send_edit_kind:
+                            try:
+                                from plugins.leona_discord.lib import llm_debug
+                                llm_debug.record_post_send_edit(
+                                    event_data,
+                                    kind=post_send_edit_kind,
+                                    sent_text=sent_text,
+                                    corrected_text=edited_text,
+                                    delay_secs=delay,
+                                    discord_message_id=str(edit_msg_id),
+                                    applied=True,
+                                )
+                            except Exception:
+                                pass
                     except Exception as edit_err:
                         logger.warning(f"[DISCORD] Post-send edit failed: {edit_err}")
+                        if post_send_edit_kind:
+                            try:
+                                from plugins.leona_discord.lib import llm_debug
+                                llm_debug.record_post_send_edit(
+                                    event_data,
+                                    kind=post_send_edit_kind,
+                                    sent_text=sent_text,
+                                    corrected_text=edited_text,
+                                    delay_secs=delay,
+                                    discord_message_id=str(edit_msg_id or ""),
+                                    applied=False,
+                                    error=str(edit_err),
+                                )
+                            except Exception:
+                                pass
             # Mark cooldown AFTER the reply is sent (not at queue time)
             # so slow LLM inference doesn't eat the cooldown window.
             from plugins.leona_discord.lib.gates import mark_reply_cooldown
