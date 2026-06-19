@@ -193,6 +193,24 @@ def _introduce_subtle_typo(text: str) -> str:
     return " ".join(words)
 
 
+def _replace_trailing_typo_phrase(sent: str, edited: str) -> Optional[str]:
+    """Replace a trailing typo phrase with the corrected text (single-line replies)."""
+    if not sent or not edited or edited in sent or sent == edited:
+        return None
+    words_sent = sent.split()
+    words_edit = edited.split()
+    if not words_sent or not words_edit:
+        return None
+    for n in range(min(6, len(words_sent)), 0, -1):
+        tail = " ".join(words_sent[-n:])
+        if tail == edited:
+            return None
+        if words_sent[-1].lower() == words_edit[-1].lower():
+            prefix = " ".join(words_sent[:-n])
+            return f"{prefix} {edited}".strip() if prefix else edited
+    return None
+
+
 def plan_explicit_edit(sent_text: str, edited_text: str) -> Optional[Tuple[float, str, str]]:
     """Plan a Discord message edit requested by the LLM via ``[edit:…]``."""
     sent = (sent_text or "").strip()
@@ -200,6 +218,19 @@ def plan_explicit_edit(sent_text: str, edited_text: str) -> Optional[Tuple[float
     if not sent or not edited or sent == edited:
         return None
     delay = random.uniform(EDIT_DELAY_MIN, EDIT_DELAY_MAX)
+
+    # Multiline replies: [edit:…] usually fixes the last line, not the whole message.
+    if "\n" in sent and edited not in sent:
+        lines = sent.splitlines()
+        if len(lines) > 1:
+            fixed = "\n".join(lines[:-1] + [edited])
+            if fixed != sent:
+                return delay, sent, fixed
+
+    trailing = _replace_trailing_typo_phrase(sent, edited)
+    if trailing and trailing != sent:
+        return delay, sent, trailing
+
     return delay, sent, edited
 
 

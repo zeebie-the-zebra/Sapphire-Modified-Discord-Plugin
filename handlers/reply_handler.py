@@ -5,7 +5,7 @@ import logging
 import random
 import re
 
-from plugins.leona_discord.lib.context_cache import clear_pending_payload, mark_reacted
+from plugins.leona_discord.lib.context_cache import clear_pending_payload, has_reacted, mark_reacted
 from plugins.leona_discord.lib.history import append_bot_reply
 from plugins.leona_discord.lib.mentions import apply_mention_map
 from plugins.leona_discord.lib.messages import (
@@ -13,6 +13,7 @@ from plugins.leona_discord.lib.messages import (
     parse_discord_snowflake,
     split_message,
 )
+from plugins.leona_discord.lib.inline_tags import parse_inline_tags
 from plugins.leona_discord.lib.reply_style import (
     maybe_append_casual_emoji,
     plan_explicit_edit,
@@ -22,7 +23,6 @@ from plugins.leona_discord.lib.reply_style import (
 )
 from plugins.leona_discord.lib.send import edit_message, send_message
 from plugins.leona_discord.lib.settings import get_effective_settings
-from plugins.leona_discord.lib.think_tags import strip_think_tags
 from plugins.leona_discord.lib.typing_indicator import (
     hold_typing_sync,
     human_pause_seconds,
@@ -36,85 +36,18 @@ from plugins.leona_discord.lib import state
 logger = logging.getLogger(__name__)
 
 
-_PLACEHOLDER_EMOJI_MAP = {
-    "flame": "🔥",
-    "fire": "🔥",
-    "thumbs up": "👍",
-    "thumbsup": "👍",
-    "thumb up": "👍",
-    "heart": "❤️",
-    "smile": "😊",
-    "grin": "😄",
-    "laugh": "😂",
-    "cry": "😭",
-    "sad": "😢",
-    "eyes": "👀",
-    "sparkles": "✨",
-    "moon": "🌙",
-    "wave": "👋",
-}
-
-
-def _normalize_placeholder_emoji(text: str) -> str:
-    """Convert common LLM emoji placeholders like <flame emoji> to real emoji."""
-    if not text:
-        return text
-
-    def repl(match):
-        inner = (match.group(1) or "").strip().lower()
-        inner = re.sub(r"\s+", " ", inner)
-        inner = inner.replace("emoji:", "").replace("emote:", "").strip()
-        inner = inner.replace(" emoji", "").strip()
-        return _PLACEHOLDER_EMOJI_MAP.get(inner, match.group(0))
-
-    return re.sub(r"<\s*([^<>]{1,40}?)\s*>", repl, text)
-
-
-def _strip_unknown_emoji_placeholders(text: str) -> str:
-    """Remove unresolved angle-bracket emoji placeholders from model output."""
-    if not text:
-        return text
-
-    def repl(match):
-        inner = (match.group(1) or "").strip().lower()
-        if inner.startswith("@") or inner.startswith("#"):
-            return match.group(0)
-        if "emoji" in inner or "emote" in inner:
-            return ""
-        return match.group(0)
-
-    return re.sub(r"<\s*([^<>]{1,60}?)\s*>", repl, text)
-
-
-def _strip_malformed_react_tag(text: str) -> str:
-    """Drop trailing malformed [react:... fragments missing closing bracket."""
-    if not text:
-        return text
-    # Handles cases like "... text [react:👍" at end of output.
-    return re.sub(r"\s*\[react:[^\]\n]{1,64}$", "", text, flags=re.IGNORECASE).rstrip()
-
-
-def _strip_malformed_gif_tag(text: str) -> str:
-    """Drop trailing malformed [gif:... fragments missing closing bracket."""
-    if not text:
-        return text
-    return re.sub(r"\s*\[gif:[^\]\n]{1,120}$", "", text, flags=re.IGNORECASE).rstrip()
-
-
-def _strip_malformed_edit_tag(text: str) -> str:
-    """Drop trailing malformed [edit:... fragments missing closing bracket."""
-    if not text:
-        return text
-    return re.sub(r"\s*\[edit:[^\]\n]{1,1900}$", "", text, flags=re.IGNORECASE).rstrip()
-
-
 def reply_handler(task, event_data: dict, response_text: str):
     from plugins.leona_discord.tools.discord_tools import (
         was_tool_sent,
         clear_tool_sent,
+        pop_tool_sent_text,
         was_gif_sent,
         clear_gif_sent,
     )
+
+    parsed_preview = parse_inline_tags(response_text or "")
+    delivery_path = ""
+    discord_sent_text = ""
 
     # Capture LLM output early (even if auto_reply is off).
     try:
@@ -122,14 +55,15 @@ def reply_handler(task, event_data: dict, response_text: str):
         llm_debug.record_response(
             event_data,
             response_raw=response_text or "",
-            response_clean=strip_think_tags((response_text or "").strip()),
+            response_clean=parsed_preview.clean,
             task=task,
         )
     except Exception:
         pass
 
     trigger_config = task.get("trigger_config", {}) or {}
-    if not trigger_config.get("auto_reply", False):
+    auto_reply = bool(task.get("auto_reply") or trigger_config.get("auto_reply"))
+    if not auto_reply:
         logger.info(
             f"[DISCORD] auto_reply OFF — skipping reply to "
             f"#{event_data.get('channel_name', event_data.get('channel_id'))} "
@@ -142,7 +76,24 @@ def reply_handler(task, event_data: dict, response_text: str):
 
     event_message_id = str(event_data.get("message_id", ""))
     if event_message_id and was_tool_sent(event_message_id):
-        logger.info("[DISCORD] Reply handler skipped — tool already sent message for this event")
+        discord_sent_text = pop_tool_sent_text(event_message_id)
+        delivery_path = "tool"
+        logger.info(
+            "[DISCORD] Reply handler skipped — tool already sent message for this event"
+            + (f" ({len(discord_sent_text)} chars)" if discord_sent_text else "")
+        )
+        try:
+            from plugins.leona_discord.lib import llm_debug
+            llm_debug.record_response(
+                event_data,
+                response_raw=response_text or "",
+                response_clean=parsed_preview.clean,
+                task=task,
+                delivery_path=delivery_path,
+                discord_sent_text=discord_sent_text,
+            )
+        except Exception:
+            pass
         clear_tool_sent(event_message_id)
         return
 
@@ -159,13 +110,13 @@ def reply_handler(task, event_data: dict, response_text: str):
     _time.sleep(read_delay)
 
     clean = response_text.strip()
-
-    clean = strip_think_tags(clean)
-    clean = _normalize_placeholder_emoji(clean)
-    clean = _strip_unknown_emoji_placeholders(clean)
-    clean = _strip_malformed_react_tag(clean)
-    clean = _strip_malformed_gif_tag(clean)
-    clean = _strip_malformed_edit_tag(clean)
+    parsed = parse_inline_tags(clean)
+    clean = parsed.clean
+    react_tags = parsed.react_tags
+    gif_tags = parsed.gif_tags
+    edit_tags = parsed.edit_tags
+    inline_gif_query = parsed.inline_gif_query
+    inline_edit_text = parsed.inline_edit_text
 
     from plugins.leona_discord.lib.sleep_forced_wake import (
         forced_wake_fallback_text,
@@ -174,17 +125,6 @@ def reply_handler(task, event_data: dict, response_text: str):
     from plugins.leona_discord.lib.settings import get_plugin_settings
 
     forced_wake = is_forced_wake_event(event_data)
-
-    react_tags = re.findall(r'\[react:([^\]]{1,64})\]', clean)
-    clean = re.sub(r'\[react:[^\]]{1,64}\]', '', clean).strip()
-
-    gif_tags = re.findall(r'\[gif:([^\]]{1,120})\]', clean)
-    clean = re.sub(r'\[gif:[^\]]{1,120}\]', '', clean).strip()
-    inline_gif_query = gif_tags[0].strip() if gif_tags else ""
-
-    edit_tags = re.findall(r'\[edit:([^\]]{1,1900})\]', clean, flags=re.IGNORECASE)
-    clean = re.sub(r'\[edit:[^\]]{1,1900}\]', '', clean, flags=re.IGNORECASE).strip()
-    inline_edit_text = edit_tags[-1].strip() if edit_tags else ""
 
     if react_tags or gif_tags or edit_tags:
         logger.info(
@@ -258,7 +198,7 @@ def reply_handler(task, event_data: dict, response_text: str):
         clean = maybe_append_casual_emoji(clean)
 
     # Flatten: split each break part into Discord-sized chunks
-    split_bullets = random.random() < BULLET_SPLIT_EACH_CHANCE
+    split_bullets = False if (inline_edit_text or inline_gif_query) else None
     all_chunks = []
     for part in (break_parts if break_parts else [clean]):
         all_chunks.extend(split_message(part, split_bullets=split_bullets))
@@ -276,6 +216,14 @@ def reply_handler(task, event_data: dict, response_text: str):
         inline_edit_text = apply_mention_map(
             inline_edit_text, mention_map, account, guild_id_for_mentions,
         )
+
+    edit_chunk_idx = None
+    edit_plan = None
+    if inline_edit_text and edits_enabled and chunks:
+        edit_chunk_idx = 0 if len(chunks) == 1 else len(chunks) - 1
+        edit_plan = plan_explicit_edit(chunks[edit_chunk_idx], inline_edit_text)
+        if not edit_plan:
+            edit_chunk_idx = None
 
     if not state._loop or not state._loop.is_running():
         logger.warning("[DISCORD] Reply handler: daemon loop not running")
@@ -301,11 +249,10 @@ def reply_handler(task, event_data: dict, response_text: str):
             ):
                 reply_id = None
 
-            edit_plan = None
-            if inline_edit_text and edits_enabled and len(chunks) == 1:
-                edit_plan = plan_explicit_edit(chunks[0], inline_edit_text)
-            elif edits_enabled and len(chunks) == 1:
+            if not edit_plan and edits_enabled and len(chunks) == 1 and not inline_edit_text:
                 edit_plan = plan_post_send_edit(chunks[0])
+                if edit_plan:
+                    edit_chunk_idx = 0
 
             # --- Human pause: jitter after LLM finishes, before typing ---
             _time.sleep(human_pause_seconds())
@@ -315,9 +262,9 @@ def reply_handler(task, event_data: dict, response_text: str):
             typing_dur = typing_duration_seconds(total_chars, text=clean)
             hold_typing_sync(account, int(channel_id), typing_dur)
 
-            sent_message_id = None
+            sent_message_ids: dict[int, int] = {}
             for i, chunk in enumerate(chunks):
-                send_text = edit_plan[1] if (i == 0 and edit_plan) else chunk
+                send_text = edit_plan[1] if (edit_plan and i == edit_chunk_idx) else chunk
                 future = asyncio.run_coroutine_threadsafe(
                     send_message(
                         account, int(channel_id), send_text,
@@ -326,8 +273,8 @@ def reply_handler(task, event_data: dict, response_text: str):
                     state._loop,
                 )
                 sent_msg = future.result(timeout=15)
-                if i == 0 and sent_msg:
-                    sent_message_id = sent_msg.id
+                if sent_msg:
+                    sent_message_ids[i] = sent_msg.id
                 logger.info(
                     f"[DISCORD] Reply chunk {i+1}/{len(chunks)} sent to "
                     f"#{event_data.get('channel_name', channel_id)} via {account}"
@@ -342,38 +289,44 @@ def reply_handler(task, event_data: dict, response_text: str):
                         typing_duration_seconds(len(chunks[i + 1]), text=chunks[i + 1]),
                     )
 
-            if edit_plan and sent_message_id:
-                delay, sent_text, edited_text = edit_plan
-                _time.sleep(delay)
-                try:
-                    edit_future = asyncio.run_coroutine_threadsafe(
-                        edit_message(account, int(channel_id), sent_message_id, edited_text),
-                        state._loop,
-                    )
-                    edit_future.result(timeout=15)
-                    from plugins.leona_discord.lib.edit_history import record_edit
-                    edit_kind = (
-                        "thought"
-                        if edited_text.startswith(sent_text.rstrip())
-                        and len(edited_text) > len(sent_text)
-                        else "typo"
-                    )
-                    record_edit(
-                        channel_key,
-                        sent_message_id,
-                        sent_text,
-                        edited_text,
-                        kind=edit_kind,
-                    )
-                    if len(chunks) == 1:
-                        final_reply_text = edited_text
-                    logger.info(
-                        f"[DISCORD] Post-send edit applied to {sent_message_id} "
-                        f"in #{event_data.get('channel_name', channel_id)}"
-                        f"{' (LLM)' if inline_edit_text else ''}"
-                    )
-                except Exception as edit_err:
-                    logger.debug(f"[DISCORD] Post-send edit failed: {edit_err}")
+            if edit_plan and edit_chunk_idx is not None:
+                edit_msg_id = sent_message_ids.get(edit_chunk_idx)
+                if edit_msg_id:
+                    delay, sent_text, edited_text = edit_plan
+                    _time.sleep(delay)
+                    try:
+                        edit_future = asyncio.run_coroutine_threadsafe(
+                            edit_message(account, int(channel_id), edit_msg_id, edited_text),
+                            state._loop,
+                        )
+                        edit_future.result(timeout=15)
+                        from plugins.leona_discord.lib.edit_history import record_edit
+                        edit_kind = (
+                            "thought"
+                            if edited_text.startswith(sent_text.rstrip())
+                            and len(edited_text) > len(sent_text)
+                            else "typo"
+                        )
+                        record_edit(
+                            channel_key,
+                            edit_msg_id,
+                            sent_text,
+                            edited_text,
+                            kind=edit_kind,
+                        )
+                        if len(chunks) == 1:
+                            final_reply_text = edited_text
+                        elif edit_chunk_idx == len(chunks) - 1:
+                            final_reply_text = "\n\n".join(
+                                chunks[:edit_chunk_idx] + [edited_text]
+                            )
+                        logger.info(
+                            f"[DISCORD] Post-send edit applied to {edit_msg_id} "
+                            f"in #{event_data.get('channel_name', channel_id)}"
+                            f"{' (LLM)' if inline_edit_text else ''}"
+                        )
+                    except Exception as edit_err:
+                        logger.warning(f"[DISCORD] Post-send edit failed: {edit_err}")
             # Mark cooldown AFTER the reply is sent (not at queue time)
             # so slow LLM inference doesn't eat the cooldown window.
             from plugins.leona_discord.lib.gates import mark_reply_cooldown
@@ -425,41 +378,63 @@ def reply_handler(task, event_data: dict, response_text: str):
     if inline_emoji and state._loop and state._loop.is_running():
         trigger_message_id = parse_discord_snowflake(event_data.get("message_id", ""))
         guild_id = event_data.get("guild_id", "")
-        if trigger_message_id and mark_reacted(account, channel_id, str(trigger_message_id), inline_emoji):
+        react_settings = get_effective_settings(
+            guild_id,
+            channel_id=str(channel_id),
+            channel_name=event_data.get("channel_name", ""),
+        )
+        from plugins.leona_discord.lib.gates import reaction_allowed
+
+        if not reaction_allowed(react_settings, account, guild_id, str(channel_id)):
+            logger.info(
+                "[DISCORD] Inline reaction skipped: reactions disabled or on cooldown in #%s",
+                event_data.get("channel_name", channel_id),
+            )
+        elif not react_settings.get("react_to_trigger", True):
+            logger.info(
+                "[DISCORD] Inline reaction skipped: react_to_trigger disabled in #%s",
+                event_data.get("channel_name", channel_id),
+            )
+        elif not trigger_message_id:
+            logger.info(
+                "[DISCORD] Inline reaction skipped: invalid/non-snowflake trigger message id %r",
+                event_data.get("message_id", ""),
+            )
+        elif has_reacted(account, channel_id, str(trigger_message_id), inline_emoji):
+            logger.info(
+                "[DISCORD] Inline reaction skipped: already reacted to message %s in #%s",
+                trigger_message_id,
+                event_data.get("channel_name", channel_id),
+            )
+        else:
             logger.info(
                 "[DISCORD] Applying inline reaction %s to message %s in #%s",
                 inline_emoji,
                 trigger_message_id,
                 event_data.get("channel_name", channel_id),
             )
-            async def _fire_inline_react(emoji=inline_emoji, gid=guild_id, msg_id=trigger_message_id):
-                try:
-                    from plugins.leona_discord.lib.reactions import add_reaction_humanized
-                    client_ref = state._clients.get(account)
-                    if not client_ref or not client_ref.is_ready():
-                        return
-                    ch = client_ref.get_channel(int(channel_id))
-                    if not ch:
-                        ch = await client_ref.fetch_channel(int(channel_id))
-                    msg = await ch.fetch_message(msg_id)
-                    await add_reaction_humanized(
-                        msg, account, gid, emoji, str(channel_id),
-                    )
-                except Exception as e:
-                    logger.debug(f"[DISCORD] Inline react failed: {e}")
 
-            asyncio.run_coroutine_threadsafe(_fire_inline_react(), state._loop)
-        elif not trigger_message_id:
-            logger.info(
-                "[DISCORD] Inline reaction skipped: invalid/non-snowflake trigger message id %r",
-                event_data.get("message_id", ""),
-            )
-        else:
-            logger.info(
-                "[DISCORD] Inline reaction skipped: already reacted to message %s in #%s",
-                trigger_message_id,
-                event_data.get("channel_name", channel_id),
-            )
+            async def _fire_inline_react(emoji=inline_emoji, gid=guild_id, msg_id=trigger_message_id):
+                from plugins.leona_discord.lib.reactions import add_reaction_humanized
+                client_ref = state._clients.get(account)
+                if not client_ref or not client_ref.is_ready():
+                    raise RuntimeError("client not ready")
+                ch = client_ref.get_channel(int(channel_id))
+                if not ch:
+                    ch = await client_ref.fetch_channel(int(channel_id))
+                msg = await ch.fetch_message(msg_id)
+                await add_reaction_humanized(
+                    msg, account, gid, emoji, str(channel_id),
+                )
+                mark_reacted(account, channel_id, str(msg_id), emoji)
+
+            try:
+                react_future = asyncio.run_coroutine_threadsafe(
+                    _fire_inline_react(), state._loop,
+                )
+                react_future.result(timeout=12)
+            except Exception as e:
+                logger.warning(f"[DISCORD] Inline react failed: {e}")
 
     client = state._clients.get(account)
     bot_display = client.user.display_name if (client and client.is_ready()) else account

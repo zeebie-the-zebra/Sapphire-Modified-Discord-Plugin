@@ -3487,8 +3487,18 @@ function _renderLlmDebugDetail(log) {
         log.task_name ? `task: ${log.task_name}` : '',
     ].filter(Boolean).join(' · ');
     const hasResponse = !!(log.response_raw || log.response_clean);
+    const deliveryNote = log.delivery_path === 'tool'
+        ? '<div class="dc-debug-warn" style="margin:8px 0;padding:8px;border-left:3px solid var(--warning,#e6a700)">'
+          + 'Discord received text from <code>discord_send_message</code> (tool), not the auto-reply path. '
+          + 'The raw LLM response below may differ from what users saw in chat.'
+          + '</div>'
+        : '';
+    const sentViaTool = log.delivery_path === 'tool' && log.discord_sent_text
+        ? _llmDebugSection('Actually sent to Discord (via tool)', log.discord_sent_text)
+        : '';
     return `
         <div class="dc-debug-meta" style="margin-bottom:12px">${_esc(meta)}<br>${_esc(flagBits)}</div>
+        ${deliveryNote}
         ${_llmDebugSection('Task instructions (continuity initial_message)', log.task_prompt)}
         ${_llmDebugSection('Formatted user message (sent to LLM)', log.formatted_prompt)}
         ${_llmDebugSection('Enriched content (memory/profile/hints injected)', log.enriched_content)}
@@ -3496,6 +3506,7 @@ function _renderLlmDebugDetail(log) {
         ${_llmDebugSection('Recent chat history', historyText)}
         ${_llmDebugSection('LLM response (raw)', log.response_raw)}
         ${_llmDebugSection('LLM response (cleaned for Discord)', log.response_clean || (hasResponse ? '' : '(no response captured yet)'))}
+        ${sentViaTool}
     `;
 }
 

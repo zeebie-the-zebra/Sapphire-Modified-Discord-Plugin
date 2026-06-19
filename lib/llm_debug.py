@@ -36,6 +36,8 @@ def ensure_llm_debug_table(conn) -> None:
             task_prompt TEXT NOT NULL DEFAULT '',
             response_raw TEXT NOT NULL DEFAULT '',
             response_clean TEXT NOT NULL DEFAULT '',
+            delivery_path TEXT NOT NULL DEFAULT '',
+            discord_sent_text TEXT NOT NULL DEFAULT '',
             responded_at REAL NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_llm_debug_time
@@ -43,6 +45,15 @@ def ensure_llm_debug_table(conn) -> None:
         CREATE INDEX IF NOT EXISTS idx_llm_debug_msg
             ON llm_debug_logs(account, channel_id, message_id, responded_at);
     """)
+    _ensure_delivery_columns(conn)
+
+
+def _ensure_delivery_columns(conn) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(llm_debug_logs)")}
+    if "delivery_path" not in cols:
+        conn.execute("ALTER TABLE llm_debug_logs ADD COLUMN delivery_path TEXT NOT NULL DEFAULT ''")
+    if "discord_sent_text" not in cols:
+        conn.execute("ALTER TABLE llm_debug_logs ADD COLUMN discord_sent_text TEXT NOT NULL DEFAULT ''")
 
 
 def _enabled() -> bool:
@@ -133,6 +144,8 @@ def record_response(
     response_raw: str = "",
     response_clean: str = "",
     task: Optional[dict] = None,
+    delivery_path: str = "",
+    discord_sent_text: str = "",
 ) -> None:
     """Attach LLM output (and task instructions if available) to the latest open log row."""
     if not _enabled() or not event_data:
@@ -174,6 +187,8 @@ def record_response(
                     response_clean = ?,
                     task_name = ?,
                     task_prompt = ?,
+                    delivery_path = COALESCE(NULLIF(?, ''), delivery_path),
+                    discord_sent_text = COALESCE(NULLIF(?, ''), discord_sent_text),
                     responded_at = ?
                 WHERE id = ?
                 """,
@@ -182,6 +197,8 @@ def record_response(
                     _clip(response_clean or ""),
                     _clip((task.get("name") or "")[:120], 120),
                     _clip(task.get("initial_message") or ""),
+                    (delivery_path or "")[:40],
+                    _clip(discord_sent_text or ""),
                     now,
                     int(row["id"]),
                 ),

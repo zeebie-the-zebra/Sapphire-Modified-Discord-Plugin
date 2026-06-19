@@ -25,6 +25,7 @@ _reply_guild_id    = ContextVar('discord_reply_guild_id',     default=None)
 _message_sent      = ContextVar('discord_message_sent',       default=False)
 
 _tool_sent_events: set = set()
+_tool_sent_text: dict = {}
 _tool_sent_events_lock = threading.Lock()
 _TOOL_SENT_MAX = 500
 
@@ -32,14 +33,24 @@ _gif_sent_events: set = set()
 _gif_sent_events_lock = threading.Lock()
 
 
-def mark_tool_sent(message_id: str):
+def mark_tool_sent(message_id: str, text: str = ""):
     """Record that a tool already sent a message for this event."""
+    mid = str(message_id)
     with _tool_sent_events_lock:
         if len(_tool_sent_events) >= _TOOL_SENT_MAX:
             to_evict = list(_tool_sent_events)[:_TOOL_SENT_MAX // 2]
             for k in to_evict:
                 _tool_sent_events.discard(k)
-        _tool_sent_events.add(str(message_id))
+                _tool_sent_text.pop(k, None)
+        _tool_sent_events.add(mid)
+        if text:
+            _tool_sent_text[mid] = text[:4000]
+
+
+def pop_tool_sent_text(message_id: str) -> str:
+    """Return and clear text sent by discord_send_message for this event."""
+    with _tool_sent_events_lock:
+        return _tool_sent_text.pop(str(message_id), "")
 
 
 def was_tool_sent(message_id: str) -> bool:
@@ -50,8 +61,27 @@ def was_tool_sent(message_id: str) -> bool:
 
 def clear_tool_sent(message_id: str):
     """Remove the marker after the reply handler has processed this event."""
+    mid = str(message_id)
     with _tool_sent_events_lock:
-        _tool_sent_events.discard(str(message_id))
+        _tool_sent_events.discard(mid)
+        _tool_sent_text.pop(mid, None)
+
+
+def _task_auto_reply_enabled() -> bool:
+    """True when the active daemon task will auto-reply to the trigger channel."""
+    try:
+        from core.continuity.executor import current_event_task
+        task = current_event_task.get() or {}
+    except ImportError:
+        return False
+    trigger = task.get("trigger_config") or {}
+    return bool(task.get("auto_reply") or trigger.get("auto_reply"))
+
+
+def _is_trigger_channel(channel) -> bool:
+    event = _get_daemon_event()
+    trigger_ch = str(event.get("channel_id") or _reply_channel_id.get() or "").strip()
+    return bool(trigger_ch and str(getattr(channel, "id", "")) == trigger_ch)
 
 
 def mark_gif_sent(message_id: str):
@@ -446,14 +476,30 @@ def _send_message(client, loop, channel_ref=None, text="", reply_to_message_id=N
     if (not text or not text.strip()) and not has_embed:
         return "Message text or embed is required.", False
 
-    lookup_id = channel_ref or str(_reply_channel_id.get() or "")
-    text = _apply_mention_map(text or "", lookup_id)
-
-    chunks = _split_long_message(text) if text and text.strip() else [""]
-
     channel, err = _resolve_channel(client, loop, channel_ref)
     if err:
         return err, False
+
+    if _task_auto_reply_enabled() and _is_trigger_channel(channel):
+        logger.info(
+            "[DISCORD] discord_send_message blocked — auto-reply handles #%s",
+            getattr(channel, "name", channel.id),
+        )
+        return (
+            "Skipped: auto-reply is enabled for this channel. Do not call "
+            "discord_send_message for the triggering channel — write your reply "
+            "as plain text and it will be sent automatically. Use inline tags "
+            "[edit:corrected text], [react:emoji], or [gif:search query] in "
+            "your text reply instead.",
+            True,
+        )
+
+    lookup_id = str(getattr(channel, "id", "") or channel_ref or _reply_channel_id.get() or "")
+    from plugins.leona_discord.lib.inline_tags import sanitize_discord_text
+    text = sanitize_discord_text(text or "")
+    text = _apply_mention_map(text, lookup_id)
+
+    chunks = _split_long_message(text) if text and text.strip() else [""]
 
     reply_id = reply_to_message_id or _reply_message_id.get()
     embed_dict = None
@@ -490,7 +536,7 @@ def _send_message(client, loop, channel_ref=None, text="", reply_to_message_id=N
     event = _get_daemon_event()
     msg_id = str(event.get("message_id", ""))
     if msg_id:
-        mark_tool_sent(msg_id)
+        mark_tool_sent(msg_id, "\n\n".join(c for c in chunks if c.strip()))
     _message_sent.set(True)
 
     if len(chunks) == 1:

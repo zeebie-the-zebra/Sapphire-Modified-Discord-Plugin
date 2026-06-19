@@ -48,6 +48,12 @@ def clear_pending_payload(channel_key: str):
         state._pending_payloads.pop(channel_key, None)
 
 
+def has_reacted(account: str, channel_id: str, message_id: str, emoji: str) -> bool:
+    entry = (state.channel_key(account, str(channel_id)), str(message_id), emoji)
+    with state._reacted_messages_lock:
+        return entry in state._reacted_messages
+
+
 def mark_reacted(account: str, channel_id: str, message_id: str, emoji: str) -> bool:
     entry = (state.channel_key(account, str(channel_id)), str(message_id), emoji)
     with state._reacted_messages_lock:

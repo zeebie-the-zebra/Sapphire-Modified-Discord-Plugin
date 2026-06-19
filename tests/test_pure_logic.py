@@ -459,6 +459,31 @@ class TestReplyStyle:
         assert sent == "teh game"
         assert edited == "the game"
 
+    def test_plan_explicit_edit_multiline_fixes_last_line(self):
+        from plugins.leona_discord.lib.reply_style import plan_explicit_edit
+
+        sent = "ok hold on let me try this properly\nyour absolutly right"
+        plan = plan_explicit_edit(sent, "you're absolutely right")
+        assert plan is not None
+        _, initial, final = plan
+        assert initial == sent
+        assert final == "ok hold on let me try this properly\nyou're absolutely right"
+
+    def test_plan_explicit_edit_single_line_trailing_typo(self):
+        from plugins.leona_discord.lib.reply_style import plan_explicit_edit
+
+        sent = (
+            "oh god did i really just type it again without the edit tag 💀 "
+            "ok i'm blaming whatever's between my ears today. let me actually try it this time "
+            "your absolutly right"
+        )
+        plan = plan_explicit_edit(sent, "you're absolutely right")
+        assert plan is not None
+        _, initial, final = plan
+        assert initial == sent
+        assert final.endswith("you're absolutely right")
+        assert "absolutly right" not in final
+
     def test_build_message_edit_hint(self):
         from plugins.leona_discord.lib.edit_history import build_message_edit_hint
         hint = build_message_edit_hint(True)
@@ -1139,32 +1164,77 @@ class TestUserProfiling:
 
 class TestReplyEmojiPlaceholderSanitize:
     def test_converts_flame_placeholder(self):
-        from plugins.leona_discord.handlers.reply_handler import _normalize_placeholder_emoji
+        from plugins.leona_discord.lib.inline_tags import normalize_placeholder_emoji
 
-        assert _normalize_placeholder_emoji("<flame emoji>") == "🔥"
+        assert normalize_placeholder_emoji("<flame emoji>") == "🔥"
 
     def test_strips_unknown_emoji_placeholder(self):
-        from plugins.leona_discord.handlers.reply_handler import _strip_unknown_emoji_placeholders
+        from plugins.leona_discord.lib.inline_tags import strip_unknown_emoji_placeholders
 
-        assert _strip_unknown_emoji_placeholders("nice <mystery emoji>") == "nice "
+        assert strip_unknown_emoji_placeholders("nice <mystery emoji>") == "nice "
 
     def test_strips_malformed_react_trailer(self):
-        from plugins.leona_discord.handlers.reply_handler import _strip_malformed_react_tag
+        from plugins.leona_discord.lib.inline_tags import strip_malformed_react_tag
 
         text = "ahh gotcha — lil self-contained bot brain 🌙[react:👍"
-        assert _strip_malformed_react_tag(text) == "ahh gotcha — lil self-contained bot brain 🌙"
+        assert strip_malformed_react_tag(text) == "ahh gotcha — lil self-contained bot brain 🌙"
 
     def test_strips_malformed_gif_trailer(self):
-        from plugins.leona_discord.handlers.reply_handler import _strip_malformed_gif_tag
+        from plugins.leona_discord.lib.inline_tags import strip_malformed_gif_tag
 
         text = "nice one [gif:funny cat"
-        assert _strip_malformed_gif_tag(text) == "nice one"
+        assert strip_malformed_gif_tag(text) == "nice one"
 
     def test_strips_malformed_edit_trailer(self):
-        from plugins.leona_discord.handlers.reply_handler import _strip_malformed_edit_tag
+        from plugins.leona_discord.lib.inline_tags import strip_malformed_edit_tag
 
         text = "ok cool [edit:actually make that tomorrow"
-        assert _strip_malformed_edit_tag(text) == "ok cool"
+        assert strip_malformed_edit_tag(text) == "ok cool"
+
+
+class TestInlineTags:
+    def test_parses_edit_and_strips_malformed_gif(self):
+        from plugins.leona_discord.lib.inline_tags import parse_inline_tags
+
+        raw = (
+            "Your absolutly right [edit:You're absolutely right] about that — "
+            "let's see if it works this time around! 🔧\n"
+            "*tests the feature* [gif:testing testing 1 2 3"
+        )
+        parsed = parse_inline_tags(raw)
+        assert parsed.inline_edit_text == "You're absolutely right"
+        assert "[edit:" not in parsed.clean
+        assert "[gif:" not in parsed.clean
+        assert "absolutly right" in parsed.clean
+        assert "*tests the feature*" in parsed.clean
+
+    def test_sanitize_discord_text_removes_literal_edit_tag(self):
+        from plugins.leona_discord.lib.inline_tags import sanitize_discord_text
+
+        text = "yeah alright [edit:yeah alright, give me a sec to type something] and try it"
+        assert sanitize_discord_text(text) == "yeah alright and try it"
+
+    def test_malformed_edit_without_closing_bracket(self):
+        from plugins.leona_discord.lib.inline_tags import parse_inline_tags
+
+        raw = "your absolutly right [edit:you're absolutely right"
+        parsed = parse_inline_tags(raw)
+        assert parsed.inline_edit_text == "you're absolutely right"
+        assert parsed.clean == "your absolutly right"
+
+    def test_user_report_multiline_malformed_edit_and_react(self):
+        from plugins.leona_discord.lib.inline_tags import parse_inline_tags
+
+        raw = (
+            "oh god did i really just type it again without the edit tag 💀 [react:🤦]\n\n"
+            "ok i'm blaming whatever's between my ears today. let me actually try it this time\n\n"
+            "your absolutly right [edit:you're absolutely right"
+        )
+        parsed = parse_inline_tags(raw)
+        assert parsed.react_tags == ["🤦"]
+        assert parsed.inline_edit_text == "you're absolutely right"
+        assert "absolutly right" in parsed.clean
+        assert "\n\n" in parsed.clean
 
 
 class TestStyleHint:
