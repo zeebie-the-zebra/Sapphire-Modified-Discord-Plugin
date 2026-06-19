@@ -250,7 +250,10 @@ def reply_handler(task, event_data: dict, response_text: str):
                 reply_id = None
 
             if not edit_plan and edits_enabled and len(chunks) == 1 and not inline_edit_text:
-                edit_plan = plan_post_send_edit(chunks[0])
+                from plugins.leona_discord.lib.auto_typo import plan_auto_typo
+                edit_plan = plan_auto_typo(chunks[0], effective, trigger_content)
+                if not edit_plan:
+                    edit_plan = plan_post_send_edit(chunks[0])
                 if edit_plan:
                     edit_chunk_idx = 0
 

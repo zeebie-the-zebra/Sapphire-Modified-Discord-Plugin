@@ -1147,6 +1147,46 @@ function _reactionsFieldsHTML(prefix) {
                     </label>
                 </div>
             </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>Auto Typos</label>
+                    <div class="dc-row-help">When the user's message has no <code>?</code>, occasionally misspell a common word (e.g. “the” → “teh”), send that version, then edit it correct after a short pause. LLM <code>[edit:…]</code> tags take priority.</div>
+                </div>
+                <div class="dc-row-control">
+                    <label class="dc-toggle">
+                        <input type="checkbox" id="${prefix}-auto-typo-enabled">
+                        <span class="dc-toggle-track"></span>
+                        <span class="dc-toggle-thumb"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>Auto Typo Chance</label>
+                    <div class="dc-row-help">Probability per eligible reply when Auto Typos is on (0–100%). Default 12%.</div>
+                </div>
+                <div class="dc-row-control">
+                    <div class="dc-slider-wrap">
+                        <input type="range" id="${prefix}-auto-typo-chance" min="0" max="100" step="1" value="12">
+                        <span id="${prefix}-auto-typo-chance-lbl" class="dc-slider-val">12%</span>
+                    </div>
+                </div>
+            </div>
+            <div id="${prefix}-auto-typo-delay-options" style="display:none">
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Typo Fix Delay (seconds)</label>
+                        <div class="dc-row-help">Random pause between sending the typo and editing it correct (min–max).</div>
+                    </div>
+                    <div class="dc-row-control" style="display:flex;gap:8px;align-items:center">
+                        <input type="number" id="${prefix}-auto-typo-delay-min" min="0.5" max="120" step="0.5" value="2"
+                            class="dc-input dc-input-sm" style="width:72px">
+                        <span class="dc-row-help">to</span>
+                        <input type="number" id="${prefix}-auto-typo-delay-max" min="0.5" max="120" step="0.5" value="6"
+                            class="dc-input dc-input-sm" style="width:72px">
+                    </div>
+                </div>
+            </div>
         </div>
     `;
 }
@@ -1433,6 +1473,17 @@ function _initGlobalSettingsFields(container) {
     _wireOutreachTargetPicker(container, p);
     _wireLocalScheduleHours(container, p);
     _wireProfilingToggle(container, p);
+    _wireAutoTypoToggle(container, p);
+}
+
+
+function _wireAutoTypoToggle(root, prefix) {
+    const enabled = root.querySelector(`#${prefix}-auto-typo-enabled`);
+    const opts = root.querySelector(`#${prefix}-auto-typo-delay-options`);
+    if (!enabled || !opts) return;
+    const sync = () => { opts.style.display = enabled.checked ? 'block' : 'none'; };
+    enabled.addEventListener('change', sync);
+    sync();
 }
 
 
@@ -1526,6 +1577,7 @@ function _wireSliders(root, prefix) {
         ['bot-chance',      'bot-chance-lbl'],
         ['human-chance',    'human-chance-lbl'],
         ['reaction-chance', 'reaction-chance-lbl'],
+        ['auto-typo-chance', 'auto-typo-chance-lbl'],
     ].forEach(([id, lbl]) => {
         const el = root.querySelector(`#${prefix}-${id}`);
         const lb = root.querySelector(`#${prefix}-${lbl}`);
@@ -3072,6 +3124,14 @@ function _populateFields(root, prefix, data) {
 
     c(`${prefix}-memory-enabled`, data.memory_enabled !== false);
     c(`${prefix}-message-edits-enabled`, data.message_edits_enabled !== false);
+    const autoTypoEnabled = data.auto_typo_enabled ?? false;
+    c(`${prefix}-auto-typo-enabled`, autoTypoEnabled);
+    const autoTypoDelayOpts = root.querySelector(`#${prefix}-auto-typo-delay-options`);
+    if (autoTypoDelayOpts) autoTypoDelayOpts.style.display = autoTypoEnabled ? 'block' : 'none';
+    v(`${prefix}-auto-typo-chance`, data.auto_typo_chance ?? 12);
+    lb(`${prefix}-auto-typo-chance-lbl`, data.auto_typo_chance ?? 12);
+    v(`${prefix}-auto-typo-delay-min`, data.auto_typo_delay_min ?? 2);
+    v(`${prefix}-auto-typo-delay-max`, data.auto_typo_delay_max ?? 6);
     v(`${prefix}-history-inject-limit`, data.history_inject_limit ?? 25);
     v(`${prefix}-history-line-max-chars`, data.history_line_max_chars ?? 280);
     v(`${prefix}-memory-max-tokens`, data.memory_max_tokens ?? 300);
@@ -3144,6 +3204,10 @@ function _readFields(root, prefix) {
         append_to_user_message:    v(`${prefix}-append-text`),
         memory_enabled:            b(`${prefix}-memory-enabled`),
         message_edits_enabled:     b(`${prefix}-message-edits-enabled`),
+        auto_typo_enabled:         b(`${prefix}-auto-typo-enabled`),
+        auto_typo_chance:          i(`${prefix}-auto-typo-chance`),
+        auto_typo_delay_min:       parseFloat(v(`${prefix}-auto-typo-delay-min`) || '2'),
+        auto_typo_delay_max:       parseFloat(v(`${prefix}-auto-typo-delay-max`) || '6'),
         history_inject_limit:      i(`${prefix}-history-inject-limit`),
         history_line_max_chars:    i(`${prefix}-history-line-max-chars`),
         memory_max_tokens:         i(`${prefix}-memory-max-tokens`),
@@ -3218,6 +3282,8 @@ async function _loadGlobalSettings(container) {
         if (reactionsMount && _API_EMOJIS && _API_EMOJIS.length > 0) {
             reactionsMount.innerHTML = _reactionsFieldsHTML('dc-g');
             _wireReactionToggle(container, 'dc-g');
+            _wireAutoTypoToggle(container, 'dc-g');
+            _wireSliders(container, 'dc-g');
         }
         _populateFields(container, 'dc-g', { ...data.global, ...data });
         _populatePersonalityFields(container, 'dc-g', { ...data.global, ...data }, data.dm ?? {});
@@ -3854,6 +3920,7 @@ function _showServerForm(container, panel, guildId, guildName, effective, rawOve
     formEl.querySelector(`#${prefix}-fields`).innerHTML = _msgFieldsHTML(prefix);
     _wireSliders(formEl, prefix);
     _wireReactionToggle(formEl, prefix);
+    _wireAutoTypoToggle(formEl, prefix);
     _wireAppendToggle(formEl, prefix);
     _wirePreset(formEl, prefix);
     _populateFields(formEl, prefix, effective);

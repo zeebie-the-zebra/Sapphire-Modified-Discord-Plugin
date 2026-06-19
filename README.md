@@ -1,6 +1,6 @@
 # Leona Discord Plugin
 
-Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.1**
+Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.3**
 
 This is a fork of the stock `plugins/discord` plugin. The stock plugin is **not modified**.
 
@@ -40,8 +40,16 @@ DistilBERT (`cardiffnlp/twitter-roberta-base-sentiment-latest`) handles slang, s
 - Messages are batched per channel (configurable delay, default 8s) to avoid multi-message LLM trains
 - Typing indicator during batch wait and LLM generation
 - Long responses split at newlines, sentence boundaries, or 2000-char hard limit
-- Contextual quote-replies, optional post-send edits, GIF follow-ups, and inline `[react:…]` / `[edit:…]` tags from the LLM
+- Contextual quote-replies, optional post-send edits, GIF follow-ups, and inline `[react:…]` / `[edit:…]` / `[gif:…]` tags from the LLM (parsed and stripped in `lib/inline_tags.py`; malformed tags without a closing `]` are handled gracefully)
 - Variable human pause (0.5–3s) and contextual typing speed after generation
+- **`discord_send_message` guard** — when auto-reply is on, the tool cannot post to the triggering channel (prevents the model from bypassing the reply handler and leaking raw tags); use inline tags or plain text instead
+
+### Message edits & auto typos
+
+- **LLM `[edit:…]` tags** — model sends a draft, then the reply is edited after a short pause (works on the last line of multiline replies; malformed `[edit:…` without `]` is still honoured)
+- **Inline `[react:…]`** — reacts to the user's trigger message (respects reaction settings; dedup fixed so failed reactions can retry)
+- **Auto Typos** (optional, off by default) — when the user's message has no `?`, a configurable chance replaces one common word with a realistic misspelling (`teh`, `definately`, transpositions, etc.), sends that version, then auto-corrects after a delay. **711-word list** in `lib/typo_wordlist.py`. Configure under **Reactions & Media → Message Edits**: enable toggle, **Auto Typo Chance** slider (0–100%), fix delay min/max. LLM `[edit:…]` always takes priority over auto typos.
+- Legacy ~4% random post-send typo/thought edits still run when auto typos do not fire (`lib/reply_style.py`)
 
 ### Per-server overrides
 
@@ -92,7 +100,7 @@ Disabled by default. Enable under **Memory → User Profiling**. Legacy per-guil
 ### Discord-native capabilities
 
 - **Slash commands**: `/ask`, `/summarize`, `/remember`, `/forget-me` — synced on bot connect (`/ask` and `/summarize` need a Schedule task wired to the Discord message event)
-- **Rich messages**: quote-replies, embeds via `discord_send_message`
+- **Rich messages**: quote-replies, embeds via `discord_send_message` (other channels / auto-reply off only when targeting the event channel)
 - **File uploads**: `discord_upload_file` tool
 - **Pinned memory**: `/remember` also writes to pinned SQLite recall
 - **Safety**: permission checks, per-user rate limits, content blocklist — all gate-logged
@@ -104,7 +112,7 @@ After responding, non-@mention messages can be ignored for a configurable period
 ### Debug traces
 
 - **Gate traces** — gate-by-gate log of reply / react-only / silent decisions (Debug tab)
-- **LLM Debug Messaging** — popup viewer for formatted prompts, injected memory/profile context, recent history, task instructions, and LLM responses (last ~40 exchanges; toggle in Debug tab)
+- **LLM Debug Messaging** — popup viewer for formatted prompts, injected memory/profile context, recent history, task instructions, and LLM responses (last ~40 exchanges; toggle in Debug tab). Warns when Discord received text via `discord_send_message` instead of the auto-reply path (shows what was actually sent vs the final LLM response)
 
 ## Configuration
 
@@ -132,9 +140,12 @@ leona_discord/
 ├── daemon.py                  # Lifecycle entry point
 ├── handlers/
 │   ├── on_message.py          # Discord message handler
-│   ├── reply_handler.py       # LLM response routing, emoji sanitization
+│   ├── reply_handler.py       # LLM response routing, inline tags, auto typos
 │   └── slash_commands.py      # /ask /summarize /remember /forget-me
 ├── lib/
+│   ├── auto_typo.py           # Auto typo planning (chance, delay, question skip)
+│   ├── typo_wordlist.py       # 700+ correct→typo word mappings
+│   ├── inline_tags.py         # [edit]/[react]/[gif] parse & strip
 │   ├── batching.py            # Message batching + profile/memory injection
 │   ├── bot_identity.py        # Bot display name for prompts and slash text
 │   ├── connection.py          # Bot connect/disconnect

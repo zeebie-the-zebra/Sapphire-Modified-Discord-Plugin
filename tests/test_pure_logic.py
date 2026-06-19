@@ -1237,6 +1237,67 @@ class TestInlineTags:
         assert "\n\n" in parsed.clean
 
 
+class TestAutoTypo:
+    def test_wordlist_size(self):
+        from plugins.leona_discord.lib.auto_typo import misspelling_entry_count
+        assert misspelling_entry_count() >= 700
+
+    def test_skips_when_trigger_has_question_mark(self, monkeypatch):
+        from plugins.leona_discord.lib.auto_typo import plan_auto_typo
+
+        monkeypatch.setattr("plugins.leona_discord.lib.auto_typo.random.random", lambda: 0.0)
+        settings = {
+            "auto_typo_enabled": True,
+            "auto_typo_chance": 100,
+            "message_edits_enabled": True,
+        }
+        assert plan_auto_typo("The quick brown fox jumps", settings, "what do you think?") is None
+
+    def test_introduces_common_typo(self, monkeypatch):
+        from plugins.leona_discord.lib.auto_typo import introduce_common_typo
+
+        monkeypatch.setattr("plugins.leona_discord.lib.auto_typo.random.choice", lambda xs: xs[0])
+        pair = introduce_common_typo("I think the game is really fun tonight")
+        assert pair is not None
+        typo_text, corrected = pair
+        assert corrected == "I think the game is really fun tonight"
+        assert typo_text != corrected
+        assert "teh" in typo_text.lower() or "realy" in typo_text.lower()
+
+    def test_plan_respects_chance(self, monkeypatch):
+        from plugins.leona_discord.lib.auto_typo import plan_auto_typo
+
+        monkeypatch.setattr("plugins.leona_discord.lib.auto_typo.random.random", lambda: 0.99)
+        settings = {
+            "auto_typo_enabled": True,
+            "auto_typo_chance": 10,
+            "message_edits_enabled": True,
+            "auto_typo_delay_min": 2.0,
+            "auto_typo_delay_max": 4.0,
+        }
+        assert plan_auto_typo("The game is really fun", settings, "nice one") is None
+
+    def test_plan_when_enabled(self, monkeypatch):
+        from plugins.leona_discord.lib.auto_typo import plan_auto_typo
+
+        monkeypatch.setattr("plugins.leona_discord.lib.auto_typo.random.random", lambda: 0.0)
+        monkeypatch.setattr("plugins.leona_discord.lib.auto_typo.random.uniform", lambda a, b: 3.0)
+        monkeypatch.setattr("plugins.leona_discord.lib.auto_typo.random.choice", lambda xs: xs[0])
+        settings = {
+            "auto_typo_enabled": True,
+            "auto_typo_chance": 100,
+            "message_edits_enabled": True,
+            "auto_typo_delay_min": 2.0,
+            "auto_typo_delay_max": 6.0,
+        }
+        plan = plan_auto_typo("The game is really fun", settings, "nice one")
+        assert plan is not None
+        delay, sent, edited = plan
+        assert delay == 3.0
+        assert sent != edited
+        assert edited == "The game is really fun"
+
+
 class TestStyleHint:
     def test_afternoon_hint_uses_local_hour(self, monkeypatch):
         from plugins.leona_discord.lib import style_hint

@@ -54,12 +54,15 @@ _INT_FIELDS = {
     "gif_reply_chance": (0, 100),
     "gif_reply_cooldown_seconds": (0, 3600),
     "gif_model_max_tokens": (20, 120),
+    "auto_typo_chance": (0, 100),
 }
 _FLOAT_FIELDS = {
     "memory_search_threshold": (0.0, 1.0),
     "activity_decay_multiplier": (0.0, 1.0),
     "profiling_imperfect_recall_chance": (0.0, 0.5),
     "profiling_fact_confidence_min": (0.0, 1.0),
+    "auto_typo_delay_min": (0.5, 120.0),
+    "auto_typo_delay_max": (0.5, 120.0),
 }
 _BOOL_FIELDS = [
     "name_match_enabled",
@@ -91,6 +94,7 @@ _BOOL_FIELDS = [
     "gif_replies_enabled",
     "gif_use_llm",
     "message_edits_enabled",
+    "auto_typo_enabled",
     "slash_commands_enabled",
     "safety_check_permissions",
 ]

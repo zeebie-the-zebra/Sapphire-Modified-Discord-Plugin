@@ -6,29 +6,90 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ## Unreleased
 
+_Nothing yet._
+
+---
+
+## 1.5.3 — Auto typos & reply delivery
+
+### Auto typos
+
+- **Auto Typos** — optional human-like spelling mistakes: pick one word from a **711-entry** list (`lib/typo_wordlist.py`), send the typo version, then edit back to the correct text after a configurable delay (`lib/auto_typo.py`)
+- Skipped when the user's message contains **`?`**
+- Settings (Global → **Reactions & Media → Message Edits**): `auto_typo_enabled` (default off), `auto_typo_chance` (0–100%, default 12), `auto_typo_delay_min` / `auto_typo_delay_max` (default 2–6s)
+- Runs only when `message_edits_enabled` is on; **LLM `[edit:…]` tags take priority**; falls back to legacy ~4% random typo/thought edits when auto typos do not fire
+- Word list covers function words, fat-finger transpositions, classic traps (ie/ei, doubled letters), homophone slips, chat/tech terms, and contractions
+
+### Inline tags & reply handler
+
+- **`lib/inline_tags.py`** — shared parse/strip for `[edit:…]`, `[react:…]`, `[gif:…]`, malformed trailing tags, and emoji placeholders
+- **`[edit:…]`** — fixes last line on multiline replies; handles missing closing `]`; trailing-typo phrase replacement on long single-line replies
+- **`[react:…]`** — inline reactions apply after send; respect `reactions_enabled`, `react_to_trigger`, and cooldown; **mark reacted only after Discord confirms** (failed reactions no longer block retries)
+- **`[gif:…]`** — unchanged follow-up path; malformed `[gif:…` at end stripped safely
+
+### Delivery & tools
+
+- **`discord_send_message` blocked** on the triggering channel when the daemon task has **auto-reply** on — returns a hint to use plain text + inline tags instead of posting raw LLM output that bypasses tag stripping (`tools/discord_tools.py`, `core/continuity/executor.py` `current_event_task`)
+- Tool sends to other channels still **sanitize inline tags** before post
+- **LLM debug** records `delivery_path` (`tool` vs auto-reply) and `discord_sent_text` when the tool path wins; UI shows a warning banner (`lib/llm_debug.py`, `web/index.js`)
+
+### Fixes
+
+- **Style hints** — time-of-day hints (`late`, `afternoon`, etc.) now use the configured user timezone, not UTC (`lib/style_hint.py`)
+- **Auto Typo Chance slider** — always visible in settings; wiring restored after emoji-grid reload (`web/index.js`)
+
+### Settings keys (auto typos)
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `auto_typo_enabled` | off | Master auto-typo toggle |
+| `auto_typo_chance` | 12 | Probability per eligible reply (0–100) |
+| `auto_typo_delay_min` | 2.0 | Min seconds before typo fix edit |
+| `auto_typo_delay_max` | 6.0 | Max seconds before typo fix edit |
+
+### New / updated modules (v1.5.3)
+
+| Module | Purpose |
+|--------|---------|
+| `lib/auto_typo.py` | Auto-typo chance roll, delay, question skip |
+| `lib/typo_wordlist.py` | Large correct→typo dictionary |
+| `lib/inline_tags.py` | Inline tag parse/strip/sanitize |
+
+---
+
+## 1.5.2 — LLM debug messaging
+
 ### Debug
 
-- **LLM Debug Messaging** — Debug tab popup viewer for the last ~40 Discord→LLM exchanges: formatted prompt, injected context, chat history, task instructions, and model response (`lib/llm_debug.py`, `GET /llm-debug`)
+- **LLM Debug Messaging** — Debug tab popup for the last ~40 Discord→LLM exchanges: formatted prompt, enriched/trigger content, chat history, task instructions, raw + cleaned model response (`lib/llm_debug.py`, `GET /llm-debug`, `llm_debug_messaging_enabled` toggle)
+
+---
+
+## 1.5.1 — Global user profiling
 
 ### User profiling
 
 - **Global profiles** — one profile per Discord user (`author_id`) across all guilds and DMs; legacy per-guild rows merge automatically on startup (`lib/profile_store.py`)
 - **Cross-guild distillation** — profile distiller pulls recent messages from all servers for the same user (`lib/store.py`)
 
-### User profiling (v1.5.0)
+---
 
-- **Per-user relationship memory** — self-contained SQLite profiles keyed by `(account, guild_id, author_id)` with message counters, disposition floats (familiarity, warmth, trust, playfulness, patience, interest), and evidence-backed facts (`lib/profile.py`, `lib/profile_store.py`)
+## 1.5.0 — User profiling (initial)
+
+### User profiling
+
+- **Per-user relationship memory** — self-contained SQLite profiles with message counters, disposition floats (familiarity, warmth, trust, playfulness, patience, interest), and evidence-backed facts (`lib/profile.py`, `lib/profile_store.py`)
 - **Passive ingest** — every incoming message updates counters and disposition; bot replies, ignores, and read-only reacts adjust interest (`handlers/on_message.py`, `handlers/reply_handler.py`)
 - **Prompt injection** — `[People context — internal]` block injected before replies alongside channel memory (`lib/batching.py`, `lib/events.py`)
 - **Reply chance modulation** — optional per-user interest/familiarity scaling of organic reply probability (`profiling_modulate_reply_chance`)
-- **LLM distiller** — scheduled job every 3 minutes extracts facts and L1/L2 summaries from buffered interactions (`schedule/profile_distill.py`, `lib/profile_distill_llm.py`)
-- **Slash commands** — `/remember` also writes a high-confidence profile fact; new `/forget-me` wipes the caller's profile in the current server
-- **Settings UI** — Memory tab → User Profiling section with enable/disable and all options (`web/index.js`)
+- **LLM distiller** — scheduled job extracts facts and L1/L2 summaries from buffered interactions (`schedule/profile_distill.py`, `lib/profile_distill_llm.py`)
+- **Slash commands** — `/remember` also writes a high-confidence profile fact; new `/forget-me` wipes the caller's global profile
+- **Settings UI** — Memory tab → User Profiling section (`web/index.js`)
 - **Design doc** — `user_profiling_design.md`
 
 ### Slash commands
 
-- `/ask`, `/summarize`, and `/remember` descriptions now use the connected bot's display name instead of hardcoded "Leona" (registered on connect before `CommandTree.sync()`).
+- `/ask`, `/summarize`, and `/remember` descriptions use the connected bot's display name instead of a hardcoded name (registered on connect before `CommandTree.sync()`).
 
 ---
 
@@ -431,6 +492,10 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 | 1.2.0 | Stage 4 | Slash commands, rich messages, moderation layer |
 | 1.3.0 | Stage 5 | LLM greetings, quiet outreach, GIF replies, vision UI fix |
 | 1.4.0 | — | Human-like timing, sleep schedule, forced wake, tabbed UI, local-time schedules, proactive identity fixes, engagement behavior |
+| 1.5.0 | — | User profiling (disposition, facts, distiller, `/forget-me`) |
+| 1.5.1 | — | Global profiles (cross-guild), cross-guild distillation |
+| 1.5.2 | — | LLM Debug Messaging popup |
+| 1.5.3 | — | Auto typos (711-word list), inline tag hardening, auto-reply delivery guard, debug delivery warnings |
 
 ---
 
