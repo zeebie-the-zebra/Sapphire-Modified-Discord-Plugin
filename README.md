@@ -1,13 +1,19 @@
 # Leona Discord Plugin
 
-Bot integration for Discord — receives messages via webhook daemon and sends replies back to channels.
+Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.1**
+
+This is a fork of the stock `plugins/discord` plugin. The stock plugin is **not modified**.
+
+For detailed settings documentation, see [`configuration_guide.md`](configuration_guide.md). For profiling internals, see [`user_profiling_design.md`](user_profiling_design.md). For release history, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Setup
 
 1. Create a bot at [discord.com/developers](https://discord.com/developers)
-2. Enable **Message Content Intent** under Bot settings
+2. Enable **Message Content Intent** under Bot → Privileged Gateway Intents
 3. Add the bot to your server using an OAuth2 invite link (scopes: `bot`, `applications.commands`)
-4. Enter the bot token and account name in the plugin settings UI
+4. Enter the bot token and account name in the plugin settings UI (**Settings → Leona Discord**)
+
+The bot uses its configured **display name** in slash-command descriptions and proactive messages (not a hardcoded name).
 
 ## Required Dependencies
 
@@ -17,140 +23,142 @@ Bot integration for Discord — receives messages via webhook daemon and sends r
 pip install vaderSentiment
 ```
 
-VADER is a lightweight rule-based sentiment analyser. It is the **default and recommended** backend for silent reactions — no extra dependencies, no model downloads.
+VADER is the **default and recommended** backend for silent reactions — lightweight, no model downloads.
 
-### DistilBERT (optional — better sentiment accuracy on Discord text)
+### DistilBERT (optional — better sentiment on Discord text)
 
 ```bash
 pip install transformers torch
 ```
 
-DistilBERT (`cardiffnlp/twitter-roberta-base-sentiment-latest`) is trained on social media text and handles Discord slang, sarcasm, and emoji better than VADER. Requires ~500 MB download on first use. Enable it in the plugin settings UI under **Sentiment Backend**.
+DistilBERT (`cardiffnlp/twitter-roberta-base-sentiment-latest`) handles slang, sarcasm, and emoji better than VADER. Requires ~500 MB on first use. Enable under **Reactions & Media → Sentiment Backend**.
 
 ## Features
 
-### Message Batching
+### Message batching & replies
 
-Messages are batched per channel to prevent rapid multi-message trains from creating separate LLM conversations. The batch delay is configurable (1–300 seconds, default 8s) in the Global Settings UI.
+- Messages are batched per channel (configurable delay, default 8s) to avoid multi-message LLM trains
+- Typing indicator during batch wait and LLM generation
+- Long responses split at newlines, sentence boundaries, or 2000-char hard limit
+- Contextual quote-replies, optional post-send edits, GIF follow-ups, and inline `[react:…]` / `[edit:…]` tags from the LLM
+- Variable human pause (0.5–3s) and contextual typing speed after generation
 
-### Typing Indicator
+### Per-server overrides
 
-Discord's typing indicator is shown during the batch wait and while awaiting AI responses via background threads — no rate limit issues.
+All major settings (reply chances, cooldown, reactions, profiling, image understanding, etc.) can be overridden per guild in the UI. @mentions always bypass filters.
 
-### Long Response Splitting
+### Image understanding
 
-AI responses exceeding Discord's 2000-character limit are automatically split:
-- Tries to split at newlines first
-- Falls back to sentence-ending punctuation (`.`, `!`, `?`)
-- Falls back to hard cut at 2000 chars if no boundary found
+Vision model describes images so a non-vision base model can respond. Configure provider, model name, and max tokens under **Reactions & Media**.
 
-### Per-Server Overrides
+### Silent reactions
 
-All settings (response chances, cooldown, reactions, image understanding) can be overridden per server in the UI.
+Emoji reactions on messages the bot does not reply to. Configure chance, scope, sentiment backend (VADER or DistilBERT), and custom allowed emoji.
 
-### Image Understanding
+### Persistent channel memory (self-contained)
 
-When a Discord user sends an image, the bot can describe it using a vision-capable model and include that description in the prompt sent to the base (non-vision) model. Configure:
-
-- **Vision Model Provider** — Sapphire LLM provider (e.g. `claude`, `openai`, `fireworks`)
-- **Vision Model Name** — exact model key (e.g. `claude-sonnet-4-6`, `gpt-4o`, `qwen3-vl-235b-a22b-thinking`)
-- **Vision Model Max Tokens** — how many tokens to allocate for the description (1–2000, default 500)
-
-The base model must not natively support images for this to be useful.
-
-### Silent Reactions
-
-The bot can add emoji reactions to messages it doesn't reply to. Configure:
-- Reaction chance (0–100%)
-- Whether to react to the triggering message only or any channel message
-- Sentiment backend (VADER or DistilBERT)
-- Custom allowed emoji (standard Unicode emoji are always allowed)
-
-### Persistent memory (self-contained)
-
-All Discord memory lives inside this plugin — **no MemPalace plugin or other Sapphire plugins required**.
+All Discord memory lives inside this plugin — **no MemPalace or other Sapphire plugins required**.
 
 - **SQLite store** at `user/plugin_data/leona_discord/discord_memory.sqlite`
-- **Channel cache**: up to 100 messages per channel (mentions, search corpus, survives restarts)
-- **Long-term search**: up to 10,000 messages per channel retained for auto-recall
-- **LLM injection**: only the last **25** messages by default (configurable 5–100), each line capped at **280** chars; images become `(+N image)` instead of URLs
-- **Older context**: keyword search pulls up to 5 relevant messages *not* already in the recent transcript (~300 token budget)
-- **Seamless injection**: relevant past context is prepended to the LLM prompt automatically at batch time — the model never needs to call tools for memory
-- **Debug traces**: gate-by-gate log of why the bot replied or stayed silent (Settings UI → Response Debug Traces)
+- **Channel cache**: up to 100 messages per channel (survives restarts)
+- **Long-term search**: up to 10,000 messages per channel for auto-recall
+- **LLM injection**: recent transcript + keyword search for older relevant lines (~300 token budget)
+- **Debug traces**: gate-by-gate log of reply / react-only / silent decisions (**Debug** tab)
 
-### Personality & presence (Tier 3)
+### User profiling (v1.5+)
 
-- **Presets**: Lurker, Helper, Chatterbox, Moderator — one-click behaviour profiles
+Optional relationship memory — who someone is to the bot and how the bot should act toward them.
+
+- **One profile per Discord user** across all servers and DMs (keyed by `author_id`, not per-guild)
+- **Passive ingest** — message counts, disposition scores (familiarity, warmth, trust, playfulness, patience, interest), topic hints
+- **Prompt injection** — `[People context — internal]` block prepended before replies alongside channel memory
+- **LLM distiller** — background job extracts facts and L1/L2 summaries from buffered interactions (cross-guild message history)
+- **Reply modulation** — optional scaling of organic reply chance from interest/familiarity
+- **Profiles tab** — inspect disposition, summaries, facts; reset a user; run distill manually
+- **Slash commands** — `/remember` saves a high-confidence fact; `/forget-me` wipes the caller's global profile
+
+Disabled by default. Enable under **Memory → User Profiling**. Legacy per-guild profile rows merge automatically on startup.
+
+### Personality & presence
+
+- **Presets**: Lurker, Helper, Chatterbox, Moderator
 - **Reply modes**: default, mentions-only, reactions-only, never (global, per-server, or per-channel)
-- **Keyword triggers** and **always-respond role IDs**
-- **User/bot allowlists & denylists**
-- **Separate DM settings** (reply chance, reaction chance, cooldown)
-- **Quiet hours (UTC)** and **activity decay** when channels are busy
-- **Morning greeting** — hourly cron; **LLM writes a fresh message** each day from your instructions (with static fallback if the LLM fails)
-- **Reaction cooldown** separate from reply cooldown; blocked emoji on negative sentiment (no 👍 on sad posts)
+- **Keyword triggers**, **always-respond role IDs**, allowlists/denylists
+- **Separate DM settings**, **quiet hours (UTC)**, **activity decay**
+- **Morning greeting** — hourly cron; LLM-written daily message from instructions
+- **Sleep schedule** — goodnight → dormant → wake; buffered overnight @mentions; optional forced wake on repeated pings
+- **Quiet outreach** — proactive starters when channels go quiet
 
-### Discord-native capabilities (Tier 4)
+### Discord-native capabilities
 
-- **Slash commands**: `/ask`, `/summarize`, `/remember` — synced on bot connect (requires Schedule task for /ask and /summarize)
-- **Rich messages**: auto-replies quote the triggering message; `discord_send_message` supports embeds + reply-to
-- **File uploads**: `discord_upload_file` tool for attachments with optional caption
-- **Pinned memory**: `/remember` saves to self-contained SQLite (injected in recall, no MemPalace)
-- **Safety layer**: permission checks, per-user rate limits, content blocklist — all gate-logged in debug traces
+- **Slash commands**: `/ask`, `/summarize`, `/remember`, `/forget-me` — synced on bot connect (`/ask` and `/summarize` need a Schedule task wired to the Discord message event)
+- **Rich messages**: quote-replies, embeds via `discord_send_message`
+- **File uploads**: `discord_upload_file` tool
+- **Pinned memory**: `/remember` also writes to pinned SQLite recall
+- **Safety**: permission checks, per-user rate limits, content blocklist — all gate-logged
 
-### Cooldown
+### Cooldown & name match
 
-After responding, the bot ignores non-@mention messages for a configurable time (0–600s). Scope can be per-channel or all channels.
-
-### Name Match
-
-When enabled, the bot always responds if its name appears anywhere in a message (soft @mention). Case-sensitive matching is optional.
+After responding, non-@mention messages can be ignored for a configurable period (0–600s), per-channel or global. **Name match** treats the bot's display name as a soft @mention.
 
 ## Configuration
 
-All configuration is done via the plugin settings UI at `/settings`. Global defaults apply to all servers; per-server overrides can be set for each guild.
+All configuration is in the plugin settings UI. Global defaults apply everywhere unless a per-server override is set.
 
-## File Structure
+**Global Settings tabs:** General · Replies · Reactions & Media · Memory · Profiles · Presence · Advanced · Debug
+
+See [`configuration_guide.md`](configuration_guide.md) for a full walkthrough of every setting.
+
+## Schedule tasks
+
+Registered in `plugin.json` and run by Sapphire's scheduler:
+
+| Task | Cron | Purpose |
+|------|------|---------|
+| `morning_greeting` | hourly | Post configured morning greetings |
+| `quiet_outreach` | every 15 min | Proactive messages in quiet channels |
+| `sleep_goodnight` | every 15 min | Goodnight, sleep state, wake handling |
+| `profile_distill` | every minute | Profile distillation queue + disposition decay (when profiling enabled) |
+
+## File structure
 
 ```
 leona_discord/
-├── daemon.py              # Lifecycle entry point; re-exports public API
-├── lib/
-│   ├── batching.py        # Message batching and event emission
-│   ├── connection.py      # Bot connect/disconnect with rate-limit safeguards
-│   ├── context_cache.py   # Reply context and reaction deduplication
-│   ├── cooldowns.py       # Probabilistic reply cooldown tracking
-│   ├── history.py         # Channel history cache + SQLite sync
-│   ├── store.py           # SQLite: messages, search, debug traces
-│   ├── memory.py          # Auto-recall for seamless prompt injection
-│   ├── trace.py           # Gate decision tracing
-│   ├── images.py          # Image collection and vision-model description
-│   ├── messages.py        # Message splitting utilities
-│   ├── mentions.py        # @name and custom emoji resolution
-│   ├── reactions.py       # Sentiment-based silent reactions
-│   ├── send.py            # Discord send helper
-│   ├── settings.py        # Settings merge and live reads
-│   ├── presets.py         # Personality preset definitions
-│   ├── gates.py           # Reply/reaction gate evaluation
-│   ├── presence.py        # Quiet hours
-│   ├── activity.py        # Channel activity decay
-│   ├── safety.py          # Permissions, rate limits, blocklist
-│   ├── events.py          # Daemon event build/emit (slash + shared)
-│   ├── embeds.py          # Discord embed helpers
-│   ├── state.py           # Shared daemon state
-│   └── typing_indicator.py
+├── daemon.py                  # Lifecycle entry point
 ├── handlers/
-│   ├── on_message.py      # Discord message event handler
-│   ├── slash_commands.py  # /ask /summarize /remember
-│   └── reply_handler.py   # LLM response routing back to channels
-├── emojis.py              # Unicode emoji list for reactions
-├── plugin.json
+│   ├── on_message.py          # Discord message handler
+│   ├── reply_handler.py       # LLM response routing, emoji sanitization
+│   └── slash_commands.py      # /ask /summarize /remember /forget-me
+├── lib/
+│   ├── batching.py            # Message batching + profile/memory injection
+│   ├── bot_identity.py        # Bot display name for prompts and slash text
+│   ├── connection.py          # Bot connect/disconnect
+│   ├── gates.py               # Reply/reaction gate evaluation
+│   ├── history.py             # Channel history + proactive formatting
+│   ├── memory.py              # Auto-recall for prompt injection
+│   ├── profile.py             # Profiling ingest, recall, engagement
+│   ├── profile_store.py       # SQLite: profiles, facts, buffers, pending
+│   ├── profile_distill_llm.py # LLM fact/summary extraction
+│   ├── settings.py            # Settings merge and live reads
+│   ├── sleep_schedule.py      # Sleep/wake state
+│   ├── store.py               # SQLite: messages, search, traces
+│   └── …                      # reactions, images, safety, typing, etc.
 ├── routes/
 │   ├── accounts.py
-│   └── settings.py
+│   ├── profiles.py            # Profile list / reset / distill-now API
+│   ├── settings.py
+│   └── traces.py
 ├── schedule/
-│   └── morning_greeting.py
+│   ├── morning_greeting.py
+│   ├── quiet_outreach.py
+│   ├── sleep_goodnight.py
+│   └── profile_distill.py
 ├── tools/
 │   └── discord_tools.py
-└── web/
-    └── index.js
+├── web/
+│   └── index.js               # Tabbed settings UI
+├── configuration_guide.md     # Detailed settings reference
+├── user_profiling_design.md   # Profiling design + implementation notes
+├── CHANGELOG.md
+└── plugin.json
 ```
