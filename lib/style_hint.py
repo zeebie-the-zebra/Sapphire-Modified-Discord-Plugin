@@ -4,7 +4,20 @@ Tells the bot how to behave in each channel: message length norms,
 time of day awareness, "you're in a casual Discord chat" framing.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
+
+
+def _local_hour() -> int:
+    """Hour (0–23) in the user's configured timezone, matching continuity prompts."""
+    try:
+        import config as _cfg
+        tz_name = getattr(_cfg, "USER_TIMEZONE", "") or ""
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo(tz_name)).hour
+        return datetime.now().astimezone().hour
+    except Exception:
+        return datetime.now().hour
 
 
 def build_style_hint(guild_name: str, channel_name: str, batch_size: int,
@@ -16,8 +29,8 @@ def build_style_hint(guild_name: str, channel_name: str, batch_size: int,
     """
     parts = []
 
-    # Time-of-day awareness
-    hour = datetime.now(timezone.utc).hour
+    # Time-of-day awareness (user timezone — same clock as "Current time:" in the prompt)
+    hour = _local_hour()
     if 5 <= hour < 12:
         parts.append("It's morning — keep the energy warm and fresh.")
     elif 12 <= hour < 17:

@@ -1167,6 +1167,23 @@ class TestReplyEmojiPlaceholderSanitize:
         assert _strip_malformed_edit_tag(text) == "ok cool"
 
 
+class TestStyleHint:
+    def test_afternoon_hint_uses_local_hour(self, monkeypatch):
+        from plugins.leona_discord.lib import style_hint
+
+        monkeypatch.setattr(style_hint, "_local_hour", lambda: 14)
+        hint = style_hint.build_style_hint("G", "general", batch_size=1)
+        assert "afternoon" in hint.lower()
+        assert "late" not in hint.lower()
+
+    def test_late_hint_after_22(self, monkeypatch):
+        from plugins.leona_discord.lib import style_hint
+
+        monkeypatch.setattr(style_hint, "_local_hour", lambda: 23)
+        hint = style_hint.build_style_hint("G", "general", batch_size=1)
+        assert "late" in hint.lower()
+
+
 class TestProfileDistillJsonRepair:
     def test_parse_json_with_trailing_comma(self):
         from plugins.leona_discord.lib.profile_distill_llm import _parse_json_with_repair
