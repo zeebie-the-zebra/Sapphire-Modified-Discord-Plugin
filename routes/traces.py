@@ -38,3 +38,20 @@ async def memory_stats(**kwargs):
     except Exception as e:
         logger.error(f"[LEONA-DISCORD] memory_stats error: {e}")
         return {"error": str(e)}
+
+
+async def list_llm_debug_logs(**kwargs):
+    """GET /api/plugin/leona_discord/llm-debug"""
+    query = kwargs.get("query") or {}
+    channel_id = str(query.get("channel_id", "")).strip()
+    try:
+        limit = min(100, max(1, int(query.get("limit", 25))))
+    except (TypeError, ValueError):
+        limit = 25
+    try:
+        from plugins.leona_discord.lib import llm_debug
+        logs = llm_debug.list_logs(limit=limit, channel_id=channel_id)
+        return {"logs": logs}
+    except Exception as e:
+        logger.error(f"[LEONA-DISCORD] list_llm_debug_logs error: {e}")
+        return {"logs": [], "error": str(e)}

@@ -116,6 +116,18 @@ def reply_handler(task, event_data: dict, response_text: str):
         clear_gif_sent,
     )
 
+    # Capture LLM output early (even if auto_reply is off).
+    try:
+        from plugins.leona_discord.lib import llm_debug
+        llm_debug.record_response(
+            event_data,
+            response_raw=response_text or "",
+            response_clean=strip_think_tags((response_text or "").strip()),
+            task=task,
+        )
+    except Exception:
+        pass
+
     trigger_config = task.get("trigger_config", {}) or {}
     if not trigger_config.get("auto_reply", False):
         logger.info(

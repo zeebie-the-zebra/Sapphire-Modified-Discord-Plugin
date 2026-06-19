@@ -201,6 +201,8 @@ def _apply_top_level_settings(body: dict, stored: dict):
         stored["always_online"] = bool(body["always_online"])
     if "debug_trace_enabled" in body:
         stored["debug_trace_enabled"] = bool(body["debug_trace_enabled"])
+    if "llm_debug_messaging_enabled" in body:
+        stored["llm_debug_messaging_enabled"] = bool(body["llm_debug_messaging_enabled"])
     if "tenor_api_key" in body:
         stored["gif_api_key"] = str(body["tenor_api_key"]).strip()[:200]
     if "gif_api_key" in body:
@@ -238,6 +240,7 @@ async def get_settings(**kwargs):
         "batch_delay": stored.get("batch_delay", 8),
         "always_online": stored.get("always_online", True),
         "debug_trace_enabled": stored.get("debug_trace_enabled", True),
+        "llm_debug_messaging_enabled": stored.get("llm_debug_messaging_enabled", True),
         "tenor_api_key": stored.get("gif_api_key") or stored.get("tenor_api_key", ""),
         "gif_api_key": stored.get("gif_api_key") or stored.get("tenor_api_key", ""),
         "gif_provider": stored.get("gif_provider", "klipy"),

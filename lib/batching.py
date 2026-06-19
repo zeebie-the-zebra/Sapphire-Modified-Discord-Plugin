@@ -388,6 +388,9 @@ def flush_batch(batch: MessageBatch):
     set_reply_context(channel_key, batch.guild_id, batch.channel_id, last["message_id"])
     set_pending_payload(channel_key, payload)
 
+    from plugins.leona_discord.lib import llm_debug
+    llm_debug.record_outgoing(payload, source="batch")
+
     loader = state.get_plugin_loader()
     try:
         if loader:

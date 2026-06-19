@@ -101,11 +101,16 @@ Disabled by default. Enable under **Memory → User Profiling**. Legacy per-guil
 
 After responding, non-@mention messages can be ignored for a configurable period (0–600s), per-channel or global. **Name match** treats the bot's display name as a soft @mention.
 
+### Debug traces
+
+- **Gate traces** — gate-by-gate log of reply / react-only / silent decisions (Debug tab)
+- **LLM Debug Messaging** — popup viewer for formatted prompts, injected memory/profile context, recent history, task instructions, and LLM responses (last ~40 exchanges; toggle in Debug tab)
+
 ## Configuration
 
 All configuration is in the plugin settings UI. Global defaults apply everywhere unless a per-server override is set.
 
-**Global Settings tabs:** General · Replies · Reactions & Media · Memory · Profiles · Presence · Advanced · Debug
+**Global Settings tabs:** General · Replies · Reactions & Media · Memory · Profiles · Presence · Advanced · Debug (gate traces + **LLM Debug Messaging** popup)
 
 See [`configuration_guide.md`](configuration_guide.md) for a full walkthrough of every setting.
 
@@ -139,6 +144,7 @@ leona_discord/
 │   ├── profile.py             # Profiling ingest, recall, engagement
 │   ├── profile_store.py       # SQLite: profiles, facts, buffers, pending
 │   ├── profile_distill_llm.py # LLM fact/summary extraction
+│   ├── llm_debug.py           # Prompt/response capture for debug UI
 │   ├── settings.py            # Settings merge and live reads
 │   ├── sleep_schedule.py      # Sleep/wake state
 │   ├── store.py               # SQLite: messages, search, traces

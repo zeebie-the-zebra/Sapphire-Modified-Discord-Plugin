@@ -152,6 +152,10 @@ def emit_event(payload: dict) -> bool:
     )
     set_pending_payload(channel_key, payload)
 
+    from plugins.leona_discord.lib import llm_debug
+    src = "slash" if payload.get("slash_command") else "event"
+    llm_debug.record_outgoing(payload, source=src)
+
     loader = state.get_plugin_loader()
     if not loader:
         clear_pending_payload(channel_key)

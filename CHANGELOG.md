@@ -6,6 +6,10 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ## Unreleased
 
+### Debug
+
+- **LLM Debug Messaging** — Debug tab popup viewer for the last ~40 Discord→LLM exchanges: formatted prompt, injected context, chat history, task instructions, and model response (`lib/llm_debug.py`, `GET /llm-debug`)
+
 ### User profiling
 
 - **Global profiles** — one profile per Discord user (`author_id`) across all guilds and DMs; legacy per-guild rows merge automatically on startup (`lib/profile_store.py`)

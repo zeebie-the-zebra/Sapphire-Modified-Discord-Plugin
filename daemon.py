@@ -59,7 +59,10 @@ def stop():
         memory.stop()
         profile.stop()
 
-        if state._loop and state._loop.is_running():
+        loop = state._loop
+        thread = state._thread
+
+        if loop and loop.is_running():
             async def _shutdown():
                 for name, client in list(state._clients.items()):
                     try:
@@ -67,16 +70,21 @@ def stop():
                     except Exception:
                         pass
                 state._clients.clear()
+                current = asyncio.current_task()
+                pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
-            future = asyncio.run_coroutine_threadsafe(_shutdown(), state._loop)
             try:
-                future.result(timeout=5)
+                future = asyncio.run_coroutine_threadsafe(_shutdown(), loop)
+                future.result(timeout=8)
             except Exception:
                 pass
-            state._loop.call_soon_threadsafe(state._loop.stop)
 
-        if state._thread and state._thread.is_alive():
-            state._thread.join(timeout=5)
+        if thread and thread.is_alive():
+            thread.join(timeout=8)
 
         with state._mention_maps_lock:
             state._mention_maps.clear()
@@ -123,7 +131,5 @@ def _run_loop():
         if not state._stop_event.is_set():
             logger.error(f"[DISCORD] Daemon loop crashed: {e}", exc_info=True)
     finally:
-        try:
-            state._loop.run_until_complete(state._loop.shutdown_asyncgens())
-        except Exception:
-            pass
+        from core.asyncio_shutdown import close_event_loop
+        close_event_loop(state._loop)

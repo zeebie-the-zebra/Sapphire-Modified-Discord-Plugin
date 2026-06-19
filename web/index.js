@@ -403,6 +403,56 @@ const _CSS = `
     font-size: 0.85em; color: var(--text-muted, #72767d);
     margin: 0 0 10px; line-height: 1.45;
 }
+
+/* LLM debug messaging modal */
+.dc-modal-overlay {
+    position: fixed; inset: 0; z-index: 10050;
+    background: rgba(0, 0, 0, 0.62);
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+}
+.dc-modal {
+    width: min(960px, 96vw); max-height: 90vh;
+    background: var(--bg-secondary, #2f3136);
+    border: 1px solid var(--border, rgba(255,255,255,0.10));
+    border-radius: 10px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.45);
+}
+.dc-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 14px 16px;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+}
+.dc-modal-header h3 { margin: 0; font-size: 1em; font-weight: 600; }
+.dc-modal-actions { display: flex; gap: 8px; align-items: center; }
+.dc-modal-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
+.dc-debug-list-item {
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;
+    cursor: pointer; background: rgba(0,0,0,0.12);
+}
+.dc-debug-list-item:hover { border-color: var(--accent, #7289da); }
+.dc-debug-list-item.selected { border-color: var(--accent, #7289da); background: rgba(114,137,218,0.12); }
+.dc-debug-section { margin-bottom: 14px; }
+.dc-debug-section h4 {
+    margin: 0 0 6px; font-size: 0.82em; font-weight: 600;
+    color: var(--accent, #7289da); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.dc-debug-pre {
+    margin: 0; padding: 10px 12px; border-radius: 6px;
+    background: var(--bg-primary, rgba(0,0,0,0.22));
+    border: 1px solid var(--border, rgba(255,255,255,0.06));
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78em; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+    max-height: 280px; overflow-y: auto;
+}
+.dc-debug-meta { font-size: 0.82em; color: var(--text-muted, #72767d); line-height: 1.5; }
+.dc-debug-badge {
+    display: inline-block; font-size: 0.72em; padding: 2px 6px; border-radius: 4px;
+    background: rgba(67,181,129,0.18); color: var(--success, #43b581); margin-left: 6px;
+}
+.dc-debug-badge.pending { background: rgba(250,166,26,0.15); color: #faa61a; }
 `;
 
 function _injectCSS() {
@@ -596,7 +646,7 @@ registerPluginSettings({
                     <div class="dc-tab-panel" data-tab="advanced" id="dc-tab-advanced"></div>
 
                     <div class="dc-tab-panel" data-tab="debug" id="dc-tab-debug">
-                        <p class="dc-tab-intro">Server-side gate logging — see why the bot replied, reacted only, or stayed silent.</p>
+                        <p class="dc-tab-intro">Gate logging and LLM prompt inspection — see what context is sent before each reply.</p>
                         <div class="dc-card">
                             <div class="dc-row">
                                 <div class="dc-row-label">
@@ -609,6 +659,22 @@ registerPluginSettings({
                                         <span class="dc-toggle-track"></span>
                                         <span class="dc-toggle-thumb"></span>
                                     </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dc-card">
+                            <div class="dc-row">
+                                <div class="dc-row-label">
+                                    <label>LLM Debug Messaging</label>
+                                    <div class="dc-row-help">Keep the last ~40 Discord→LLM exchanges (formatted prompt, injections, history, and model response). Opens in a popup viewer.</div>
+                                </div>
+                                <div class="dc-row-control" style="display:flex;gap:8px;align-items:center">
+                                    <label class="dc-toggle">
+                                        <input type="checkbox" id="dc-llm-debug-enabled" checked>
+                                        <span class="dc-toggle-track"></span>
+                                        <span class="dc-toggle-thumb"></span>
+                                    </label>
+                                    <button type="button" class="dc-btn dc-btn-sm" id="dc-open-llm-debug">Open Debug Messaging</button>
                                 </div>
                             </div>
                         </div>
@@ -654,6 +720,7 @@ registerPluginSettings({
         container.querySelector('#dc-add-account')?.addEventListener('click', () => _showAddForm(container));
         container.querySelector('#dc-save-global')?.addEventListener('click', () => _saveGlobalSettings(container));
         container.querySelector('#dc-refresh-traces')?.addEventListener('click', () => _loadTraces(container));
+        container.querySelector('#dc-open-llm-debug')?.addEventListener('click', () => _openLlmDebugModal());
         container.querySelector('#dc-refresh-profiles')?.addEventListener('click', () => _loadProfiles(container));
         container.querySelector('#dc-run-profile-distill')?.addEventListener('click', async () => {
             const btn = container.querySelector('#dc-run-profile-distill');
@@ -3139,6 +3206,8 @@ async function _loadGlobalSettings(container) {
         if (alwaysEl) alwaysEl.checked = data.always_online !== false;
         const traceEl = container.querySelector('#dc-debug-trace');
         if (traceEl) traceEl.checked = data.debug_trace_enabled !== false;
+        const llmDbgEl = container.querySelector('#dc-llm-debug-enabled');
+        if (llmDbgEl) llmDbgEl.checked = data.llm_debug_messaging_enabled !== false;
         const slashEl = container.querySelector('#dc-slash-enabled');
         if (slashEl) slashEl.checked = data.slash_commands_enabled !== false;
         _populateReplyContextFields(container, data);
@@ -3189,6 +3258,7 @@ async function _saveGlobalSettings(container) {
                 batch_delay,
                 always_online: container.querySelector('#dc-always-online')?.checked !== false,
                 debug_trace_enabled: container.querySelector('#dc-debug-trace')?.checked !== false,
+                llm_debug_messaging_enabled: container.querySelector('#dc-llm-debug-enabled')?.checked !== false,
                 slash_commands_enabled: container.querySelector('#dc-slash-enabled')?.checked !== false,
                 apply_preset_values: false,
                 ..._readReplyContextFields(container),
@@ -3254,6 +3324,7 @@ async function _saveAllSettings(container) {
                 batch_delay,
                 always_online: container.querySelector('#dc-always-online')?.checked !== false,
                 debug_trace_enabled: container.querySelector('#dc-debug-trace')?.checked !== false,
+                llm_debug_messaging_enabled: container.querySelector('#dc-llm-debug-enabled')?.checked !== false,
                 slash_commands_enabled: container.querySelector('#dc-slash-enabled')?.checked !== false,
                 apply_preset_values: false,
                 ..._readReplyContextFields(container),
@@ -3325,6 +3396,7 @@ function _readFieldsGlobal(container) {
         batch_delay: isNaN(batch_delay) ? 8 : batch_delay,
         always_online: container.querySelector('#dc-always-online')?.checked !== false,
         debug_trace_enabled: container.querySelector('#dc-debug-trace')?.checked !== false,
+        llm_debug_messaging_enabled: container.querySelector('#dc-llm-debug-enabled')?.checked !== false,
         slash_commands_enabled: container.querySelector('#dc-slash-enabled')?.checked !== false,
         ..._readReplyContextFields(container),
         ..._readFields(container, 'dc-g'),
@@ -3369,6 +3441,154 @@ async function _loadTraces(container) {
     } catch (e) {
         panel.innerHTML = `<p class="dc-empty">Failed to load traces: ${_esc(e.message)}</p>`;
     }
+}
+
+
+let _llmDebugModalEl = null;
+let _llmDebugLogsCache = [];
+let _llmDebugSelectedId = null;
+
+
+function _closeLlmDebugModal() {
+    if (_llmDebugModalEl) {
+        _llmDebugModalEl.remove();
+        _llmDebugModalEl = null;
+    }
+    _llmDebugSelectedId = null;
+}
+
+
+function _llmDebugSection(title, text) {
+    const body = (text || '').trim();
+    if (!body) return '';
+    return `<div class="dc-debug-section"><h4>${_esc(title)}</h4><pre class="dc-debug-pre">${_esc(body)}</pre></div>`;
+}
+
+
+function _renderLlmDebugDetail(log) {
+    if (!log) return '<p class="dc-empty">Select an exchange to inspect.</p>';
+    const when = log.ts ? new Date(log.ts * 1000).toLocaleString() : 'unknown';
+    const flags = log.flags || {};
+    const flagBits = [
+        flags.memory_context ? 'memory' : '',
+        flags.profile_context ? 'profile' : '',
+        flags.is_dm ? 'dm' : '',
+        flags.slash_command ? `/${flags.slash_command}` : '',
+        `batch×${flags.batch_size ?? 1}`,
+        `hist ${flags.history_size ?? 0}`,
+    ].filter(Boolean).join(' · ');
+    const historyText = (log.recent_history || []).map(line => `  ${line}`).join('\n');
+    const meta = [
+        `#${log.channel_name || log.channel_id || '?'}`,
+        log.guild_name ? `(${log.guild_name})` : '',
+        `@${log.username || 'unknown'}`,
+        when,
+        log.source || 'batch',
+        log.task_name ? `task: ${log.task_name}` : '',
+    ].filter(Boolean).join(' · ');
+    const hasResponse = !!(log.response_raw || log.response_clean);
+    return `
+        <div class="dc-debug-meta" style="margin-bottom:12px">${_esc(meta)}<br>${_esc(flagBits)}</div>
+        ${_llmDebugSection('Task instructions (continuity initial_message)', log.task_prompt)}
+        ${_llmDebugSection('Formatted user message (sent to LLM)', log.formatted_prompt)}
+        ${_llmDebugSection('Enriched content (memory/profile/hints injected)', log.enriched_content)}
+        ${_llmDebugSection('Trigger text (raw user message)', log.trigger_content)}
+        ${_llmDebugSection('Recent chat history', historyText)}
+        ${_llmDebugSection('LLM response (raw)', log.response_raw)}
+        ${_llmDebugSection('LLM response (cleaned for Discord)', log.response_clean || (hasResponse ? '' : '(no response captured yet)'))}
+    `;
+}
+
+
+function _renderLlmDebugModalBody() {
+    const listHtml = _llmDebugLogsCache.length
+        ? _llmDebugLogsCache.map(log => {
+            const when = log.ts ? new Date(log.ts * 1000).toLocaleString() : '';
+            const hasResponse = !!(log.response_raw || log.response_clean);
+            const badge = hasResponse
+                ? '<span class="dc-debug-badge">response</span>'
+                : '<span class="dc-debug-badge pending">pending</span>';
+            const selected = log.id === _llmDebugSelectedId ? ' selected' : '';
+            const preview = (log.trigger_content || log.formatted_prompt || '').replace(/\s+/g, ' ').slice(0, 90);
+            return `<div class="dc-debug-list-item${selected}" data-log-id="${log.id}">
+                <div><strong>#${_esc(log.channel_name || log.channel_id || '?')}</strong> · ${_esc(log.username || '?')} ${badge}</div>
+                <div class="dc-row-help" style="margin:2px 0 0">${_esc(when)} · ${_esc(preview || '(no preview)')}${preview.length >= 90 ? '…' : ''}</div>
+            </div>`;
+        }).join('')
+        : '<p class="dc-empty">No LLM exchanges logged yet. Chat with the bot (with LLM Debug Messaging enabled), then refresh.</p>';
+
+    const selected = _llmDebugLogsCache.find(l => l.id === _llmDebugSelectedId) || _llmDebugLogsCache[0] || null;
+    if (!_llmDebugSelectedId && selected) _llmDebugSelectedId = selected.id;
+
+    return `
+        <div style="display:grid;grid-template-columns:minmax(220px,34%) 1fr;gap:14px;align-items:start">
+            <div>${listHtml}</div>
+            <div id="dc-llm-debug-detail">${_renderLlmDebugDetail(selected)}</div>
+        </div>
+    `;
+}
+
+
+async function _refreshLlmDebugModal() {
+    const body = _llmDebugModalEl?.querySelector('#dc-llm-debug-body');
+    const status = _llmDebugModalEl?.querySelector('#dc-llm-debug-status');
+    if (!body) return;
+    try {
+        if (status) status.textContent = 'Loading…';
+        const res = await fetch('/api/plugin/leona_discord/llm-debug?limit=25');
+        const data = res.ok ? await res.json() : {};
+        _llmDebugLogsCache = Array.isArray(data.logs) ? data.logs : [];
+        if (!_llmDebugLogsCache.some(l => l.id === _llmDebugSelectedId)) {
+            _llmDebugSelectedId = _llmDebugLogsCache[0]?.id ?? null;
+        }
+        body.innerHTML = _renderLlmDebugModalBody();
+        body.querySelectorAll('.dc-debug-list-item').forEach(el => {
+            el.addEventListener('click', () => {
+                _llmDebugSelectedId = Number(el.dataset.logId);
+                body.querySelectorAll('.dc-debug-list-item').forEach(n => n.classList.remove('selected'));
+                el.classList.add('selected');
+                const detail = body.querySelector('#dc-llm-debug-detail');
+                const log = _llmDebugLogsCache.find(l => l.id === _llmDebugSelectedId);
+                if (detail) detail.innerHTML = _renderLlmDebugDetail(log);
+            });
+        });
+        if (status) status.textContent = `${_llmDebugLogsCache.length} exchange(s)`;
+    } catch (e) {
+        body.innerHTML = `<p class="dc-empty">Failed to load: ${_esc(e.message)}</p>`;
+        if (status) status.textContent = 'Error';
+    }
+}
+
+
+async function _openLlmDebugModal() {
+    _closeLlmDebugModal();
+    _llmDebugLogsCache = [];
+    _llmDebugSelectedId = null;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'dc-modal-overlay';
+    overlay.innerHTML = `
+        <div class="dc-modal" role="dialog" aria-labelledby="dc-llm-debug-title">
+            <div class="dc-modal-header">
+                <h3 id="dc-llm-debug-title">LLM Debug Messaging</h3>
+                <div class="dc-modal-actions">
+                    <span id="dc-llm-debug-status" class="dc-row-help"></span>
+                    <button type="button" class="dc-btn dc-btn-sm" id="dc-llm-debug-refresh">Refresh</button>
+                    <button type="button" class="dc-btn dc-btn-sm" id="dc-llm-debug-close">Close</button>
+                </div>
+            </div>
+            <div class="dc-modal-body" id="dc-llm-debug-body"><p class="dc-empty">Loading…</p></div>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) _closeLlmDebugModal();
+    });
+    document.body.appendChild(overlay);
+    _llmDebugModalEl = overlay;
+
+    overlay.querySelector('#dc-llm-debug-close')?.addEventListener('click', _closeLlmDebugModal);
+    overlay.querySelector('#dc-llm-debug-refresh')?.addEventListener('click', () => _refreshLlmDebugModal());
+    await _refreshLlmDebugModal();
 }
 
 

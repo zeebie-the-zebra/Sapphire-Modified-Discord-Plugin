@@ -122,6 +122,8 @@ def init_db():
         _migrate_sleep_state(conn)
         from plugins.leona_discord.lib.profile_store import ensure_profile_tables
         ensure_profile_tables(conn)
+        from plugins.leona_discord.lib.llm_debug import ensure_llm_debug_table
+        ensure_llm_debug_table(conn)
         conn.commit()
         _conn = conn
         logger.info(f"[LEONA-DISCORD] Memory store opened at {path}")
