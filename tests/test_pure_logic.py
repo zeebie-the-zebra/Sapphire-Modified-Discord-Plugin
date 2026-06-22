@@ -1332,6 +1332,97 @@ class TestProfileDistillJsonRepair:
         assert data.get("facts_add") == []
 
 
+class TestProfileDistillTwoPass:
+    def test_normalize_minimal_no_updates(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _normalize_minimal_result
+
+        out = _normalize_minimal_result({
+            "has_updates": False,
+            "facts_add": [],
+            "disposition_delta": {},
+        })
+        assert out["has_updates"] is False
+        assert out["facts_add"] == []
+        assert out["disposition_delta"] == {}
+
+    def test_normalize_minimal_infers_updates_from_facts(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _normalize_minimal_result
+
+        out = _normalize_minimal_result({
+            "has_updates": False,
+            "facts_add": [{
+                "category": "preference",
+                "key": "tone",
+                "value": "likes short replies",
+                "confidence": 0.9,
+            }],
+            "disposition_delta": {},
+        })
+        assert out["has_updates"] is True
+        assert len(out["facts_add"]) == 1
+        assert out["facts_add"][0]["value"] == "likes short replies"
+
+    def test_normalize_minimal_clamps_disposition(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _normalize_minimal_result
+
+        out = _normalize_minimal_result({
+            "has_updates": True,
+            "facts_add": [],
+            "disposition_delta": {"warmth": 0.2, "trust": -0.03},
+        })
+        assert out["disposition_delta"]["warmth"] == 0.05
+        assert out["disposition_delta"]["trust"] == -0.03
+
+    def test_merge_minimal_only(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _merge_distill_results
+
+        minimal = {
+            "has_updates": True,
+            "facts_add": [{"category": "interest", "key": "game", "value": "plays D&D", "confidence": 0.8}],
+            "disposition_delta": {"interest": 0.02},
+        }
+        merged = _merge_distill_results(minimal, None)
+        assert len(merged["facts_add"]) == 1
+        assert merged["disposition_delta"]["interest"] == 0.02
+        assert merged["l1_summary"] == ""
+
+    def test_merge_full_summaries(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _merge_distill_results
+
+        minimal = {"facts_add": [], "disposition_delta": {}}
+        full = {
+            "facts_supersede": [{"id": 3, "reason": "outdated"}],
+            "relationship_note": "friendly banter",
+            "l1_summary": "enjoys RPGs",
+            "l2_summary": "long-time player",
+        }
+        merged = _merge_distill_results(minimal, full)
+        assert merged["facts_supersede"] == [{"id": 3, "reason": "outdated"}]
+        assert merged["relationship_note"] == "friendly banter"
+        assert merged["l1_summary"] == "enjoys RPGs"
+
+    def test_has_distill_updates_empty(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _has_distill_updates
+
+        assert _has_distill_updates({}) is False
+        assert _has_distill_updates({
+            "facts_add": [],
+            "disposition_delta": {},
+            "facts_supersede": [],
+            "relationship_note": "",
+            "l1_summary": "",
+            "l2_summary": "",
+        }) is False
+
+    def test_has_distill_updates_with_fact(self):
+        from plugins.leona_discord.lib.profile_distill_llm import _has_distill_updates
+
+        assert _has_distill_updates({
+            "facts_add": [{"category": "preference", "key": "x", "value": "y", "confidence": 0.5}],
+            "disposition_delta": {},
+        }) is True
+
+
 # ── presence ──────────────────────────────────────────────────────────────
 
 class TestPresenceActivities:
