@@ -1,5 +1,10 @@
 """Process profile distillation queue and idle interaction buffers."""
 
+# -- Portable import path (works from plugins/ or user/plugins/) --
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location('_ldc', str(__import__('pathlib').Path(__file__).resolve().parent.parent / '_compat.py'))
+_mod = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod); del _ilu, _spec, _mod
+
 import logging
 import time
 

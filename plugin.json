@@ -1,13 +1,14 @@
 {
   "name": "leona_discord",
   "short_name": "Leona Discord",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Leona's modified Discord plugin — bot accounts, messaging, daemon listener",
   "author": "sapphire",
   "url": "https://sapphireblue.dev",
   "icon": "🎮",
   "priority": 50,
   "default_enabled": false,
+  "pip_dependencies": ["discord.py", "vaderSentiment"],
   "settingsUI": "plugin",
   "capabilities": {
     "tools": ["tools/discord_tools.py"],

@@ -1,10 +1,25 @@
 # Leona Discord Plugin
 
-Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.3**
+Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.4**
 
-This is a fork of the stock `plugins/discord` plugin. The stock plugin is **not modified**.
+This is a fork of the stock `plugins/discord` plugin. The stock plugin is **not modified**. **Do not enable both** — they register the same Discord tool names and will conflict.
 
-For detailed settings documentation, see [`configuration_guide.md`](configuration_guide.md). For profiling internals, see [`user_profiling_design.md`](user_profiling_design.md). For release history, see [`CHANGELOG.md`](CHANGELOG.md).
+For detailed settings documentation, see [`configuration_guide.md`](configuration_guide.md). For profiling internals, see [`user_profiling_design.md`](user_profiling_design.md). For install paths (`plugins/` vs `user/plugins/`), see [`DUAL_PLACEMENT.md`](DUAL_PLACEMENT.md). For release history, see [`CHANGELOG.md`](CHANGELOG.md).
+
+## Installation
+
+Sapphire discovers this plugin automatically on startup from either location:
+
+| Path | Typical use |
+|------|-------------|
+| `plugins/leona_discord/` | Bundled with Sapphire, local development |
+| `user/plugins/leona_discord/` | Plugin Store install, sideload, per-user copy |
+
+Copy the plugin folder to one location only (not both — if both exist, `user/plugins/` wins). Omit `.git/` and `__pycache__/` from store or sideload packages.
+
+For unsigned installs (`user/plugins/` or unsigned sideload), enable **Allow unsigned plugins** in Settings → Plugins.
+
+Sapphire checks `pip_dependencies` from `plugin.json` before loading code. Missing packages are reported in the UI with an install hint.
 
 ## Setup
 
@@ -15,17 +30,24 @@ For detailed settings documentation, see [`configuration_guide.md`](configuratio
 
 The bot uses its configured **display name** in slash-command descriptions and proactive messages (not a hardcoded name).
 
-## Required Dependencies
+## Dependencies
 
-### vaderSentiment (required for reactions)
+Declared in `plugin.json` as `pip_dependencies` (checked at plugin load):
+
+| Package | Required | Purpose |
+|---------|----------|---------|
+| `discord.py` | Yes | Discord bot API and gateway |
+| `vaderSentiment` | Yes | Default sentiment backend for silent reactions |
+
+Install manually if needed:
 
 ```bash
-pip install vaderSentiment
+pip install discord.py vaderSentiment
 ```
 
-VADER is the **default and recommended** backend for silent reactions — lightweight, no model downloads.
-
 ### DistilBERT (optional — better sentiment on Discord text)
+
+Not in `pip_dependencies` (large download). Install only if you switch the sentiment backend in settings:
 
 ```bash
 pip install transformers torch
@@ -137,6 +159,8 @@ Registered in `plugin.json` and run by Sapphire's scheduler:
 
 ```
 leona_discord/
+├── _compat.py                 # Portable imports (plugins/ or user/plugins/)
+├── DUAL_PLACEMENT.md          # Dual install path notes
 ├── daemon.py                  # Lifecycle entry point
 ├── handlers/
 │   ├── on_message.py          # Discord message handler

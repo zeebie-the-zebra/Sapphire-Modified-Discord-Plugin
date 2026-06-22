@@ -10,6 +10,24 @@ _Nothing yet._
 
 ---
 
+## 1.5.4 — Packaging & dual placement
+
+### Manifest
+
+- **`pip_dependencies`** — `discord.py` and `vaderSentiment` declared in `plugin.json`; Sapphire checks them before load and surfaces missing packages in the UI
+
+### Dual placement
+
+- **`_compat.py`** — portable `plugins.leona_discord` imports from either `plugins/leona_discord/` or `user/plugins/leona_discord/` (mempalace pattern)
+- **Entry-point bootstraps** — `daemon.py`, `tools/discord_tools.py`, all `routes/*.py`, all `schedule/*.py`
+- **`DUAL_PLACEMENT.md`** — install paths, test checklist, coexistence notes
+
+### Docs
+
+- **`README.md`** — installation section (`plugins/` vs `user/plugins/`), dependency table, stock `discord` mutual-exclusion note, dual-placement link
+
+---
+
 ## 1.5.3 — Auto typos & reply delivery
 
 ### Auto typos
