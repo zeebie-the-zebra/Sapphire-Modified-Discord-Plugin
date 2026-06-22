@@ -97,6 +97,9 @@ def build_event_payload(
     if edit_hint:
         combined = f"{combined}\n\n{edit_hint}"
 
+    from plugins.leona_discord.lib.mentions import build_mention_format_hint
+    combined = f"{combined}\n\n{build_mention_format_hint()}"
+
     recent_history = format_recent_history(full_history, guild_id)
     msg_stub = [{"author_id": author_id, "username": username, "display_name": display_name}]
     mention_map = build_mention_map(full_history, msg_stub)

@@ -1330,3 +1330,91 @@ class TestProfileDistillJsonRepair:
         raw = "```json\n{\"facts_add\":[],\"disposition_delta\":{}}\n```"
         data = _parse_json_with_repair(raw)
         assert data.get("facts_add") == []
+
+
+# ── presence ──────────────────────────────────────────────────────────────
+
+class TestPresenceActivities:
+    def test_parse_preserves_clear_markers(self):
+        from plugins.leona_discord.lib.presence import parse_presence_activities
+
+        assert parse_presence_activities("-\nlistening: chat\n-") == ["", "listening: chat", ""]
+
+    def test_parse_activity_prefixes(self):
+        from plugins.leona_discord.lib.presence import parse_activity_entry
+
+        assert parse_activity_entry("playing: Minecraft") == ("playing", "Minecraft")
+        assert parse_activity_entry("watching: the server") == ("watching", "the server")
+        assert parse_activity_entry("just vibing") == ("custom", "just vibing")
+        assert parse_activity_entry("custom: enjoying alone time") == ("custom", "enjoying alone time")
+        assert parse_activity_entry("") == (None, None)
+
+    def test_interval_clamped(self):
+        from plugins.leona_discord.lib.presence import presence_cycle_interval_seconds
+
+        assert presence_cycle_interval_seconds({"presence_cycle_interval_minutes": 2}) == 300
+        assert presence_cycle_interval_seconds({"presence_cycle_interval_minutes": 999}) == 10800
+
+    def test_preset_pool_from_checkboxes(self):
+        from plugins.leona_discord.lib.presence import presence_activity_pool
+
+        pool = presence_activity_pool({
+            "presence_activity_presets": ["clear", "playing_dnd"],
+            "presence_activities_custom": ["listening: my playlist"],
+        })
+        assert "" in pool
+        assert "playing: D&D" in pool
+        assert "listening: my playlist" in pool
+
+    def test_legacy_presence_activities_migrate(self):
+        from plugins.leona_discord.lib.presence import resolve_presence_selection
+
+        enabled, custom = resolve_presence_selection({
+            "presence_activities": ["", "watching the server", "listening: chat"],
+        })
+        assert "clear" in enabled
+        assert "watching_server" in enabled
+        assert "listening_chat" in enabled
+        assert custom == []
+
+
+# ── mentions ──────────────────────────────────────────────────────────────
+
+class TestMentionResolution:
+    def test_angle_bracket_display_name_resolves_from_map(self):
+        from plugins.leona_discord.lib.mentions import apply_mention_map
+
+        mmap = {"spike le vain": "999888777666555444"}
+        out = apply_mention_map("hey <@Spike le Vain>", mmap, "", "")
+        assert out == "hey <@999888777666555444>"
+
+    def test_bare_at_multiword_name_resolves_from_map(self):
+        from plugins.leona_discord.lib.mentions import apply_mention_map
+
+        mmap = {"spike le vain": "999888777666555444"}
+        out = apply_mention_map("say hello to @Spike le Vain", mmap, "", "")
+        assert out == "say hello to <@999888777666555444>"
+
+    def test_numeric_angle_mention_unchanged(self):
+        from plugins.leona_discord.lib.mentions import apply_mention_map
+
+        out = apply_mention_map("ping <@123456789012345678>", {}, "", "")
+        assert out == "ping <@123456789012345678>"
+
+    def test_build_mention_map_includes_mentioned_users(self):
+        from plugins.leona_discord.lib.history import build_mention_map
+
+        mmap = build_mention_map([], [{
+            "author_id": "1",
+            "username": "zeebie",
+            "display_name": "Zeebie",
+            "mentioned_users": [{
+                "id": "999888777666555444",
+                "username": "spike",
+                "display_name": "Spike le Vain",
+            }],
+        }])
+        assert mmap.get("spike le vain") == "999888777666555444"
+        assert mmap.get("zeebie") == "1"
+
+

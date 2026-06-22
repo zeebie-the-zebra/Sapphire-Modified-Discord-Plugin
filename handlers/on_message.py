@@ -4,6 +4,7 @@ import logging
 
 from plugins.leona_discord.lib.activity import record_message
 from plugins.leona_discord.lib.batching import get_or_create_batch, queue_message
+from plugins.leona_discord.lib.mentions import mentioned_users_from_discord
 from plugins.leona_discord.lib import gates
 from plugins.leona_discord.lib.history import append_message
 from plugins.leona_discord.lib.images import collect_image_urls
@@ -130,6 +131,7 @@ def register_on_message(client, account_name: str):
                 "display_name": message.author.display_name,
                 "author_id": author_id,
                 "mentioned": str(mentioned),
+                "mentioned_users": mentioned_users_from_discord(message),
                 "image_urls": image_urls,
                 "sleep_forced_wake": True,
             }
@@ -171,6 +173,7 @@ def register_on_message(client, account_name: str):
             "display_name": message.author.display_name,
             "author_id": author_id,
             "mentioned": str(mentioned),
+            "mentioned_users": mentioned_users_from_discord(message),
             "image_urls": image_urls,
         }
 

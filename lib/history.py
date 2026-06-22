@@ -79,17 +79,27 @@ def append_bot_reply(channel_key: str, clean: str, account: str, bot_display: st
 
 
 def build_mention_map(full_history: list, messages_to_send: list) -> dict:
+    from plugins.leona_discord.lib.mentions import merge_user_into_mention_map
+
     mention_map = {}
     for m in full_history + messages_to_send:
         aid = m.get("author_id", "")
-        if not aid or aid == "bot":
-            continue
-        uname = m.get("username", "")
-        dname = m.get("display_name", "")
-        if uname:
-            mention_map[uname.lower()] = aid
-        if dname and dname.lower() != uname.lower():
-            mention_map[dname.lower()] = aid
+        if aid and aid != "bot":
+            merge_user_into_mention_map(
+                mention_map,
+                aid,
+                username=m.get("username", ""),
+                display_name=m.get("display_name", ""),
+            )
+        for user in m.get("mentioned_users") or []:
+            if not isinstance(user, dict):
+                continue
+            merge_user_into_mention_map(
+                mention_map,
+                user.get("id", ""),
+                username=user.get("username", ""),
+                display_name=user.get("display_name", ""),
+            )
     return mention_map
 
 

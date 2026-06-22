@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 from plugins.leona_discord.emojis import DISCORD_EMOJI
 from plugins.leona_discord.lib.presets import VALID_PRESETS, preset_values
+from plugins.leona_discord.lib.presence import DEFAULT_ENABLED_PRESET_IDS, presence_preset_catalog
 from plugins.leona_discord.lib.reply_context import apply_reply_context_settings, read_reply_context_settings
 from plugins.leona_discord.lib.settings import DM_DEFAULTS, SETTING_DEFAULTS
 
@@ -38,6 +39,7 @@ _INT_FIELDS = {
     "history_line_max_chars": (80, 1000),
     "quiet_hours_start": (0, 23),
     "quiet_hours_end": (0, 23),
+    "presence_cycle_interval_minutes": (5, 180),
     "activity_decay_threshold": (2, 100),
     "engagement_weight": (1, 100),
     "rate_limit_seconds": (0, 120),
@@ -85,6 +87,7 @@ _BOOL_FIELDS = [
     "profiling_imperfect_recall",
     "ignore_bots",
     "quiet_hours_enabled",
+    "presence_cycling_enabled",
     "activity_decay_enabled",
     "greeting_enabled",
     "greeting_use_llm",
@@ -190,6 +193,17 @@ def _apply_message_settings(body: dict, target: dict):
         target["sleep_message"] = str(body["sleep_message"]).strip()[:2000]
     if "sleep_forced_wake_fallback" in body:
         target["sleep_forced_wake_fallback"] = str(body["sleep_forced_wake_fallback"]).strip()[:500]
+    if "presence_activity_presets" in body:
+        from plugins.leona_discord.lib.presence import valid_preset_ids
+        valid = valid_preset_ids()
+        raw_ids = body["presence_activity_presets"]
+        if isinstance(raw_ids, list):
+            target["presence_activity_presets"] = [
+                str(item).strip() for item in raw_ids if str(item).strip() in valid
+            ][:50]
+    if "presence_activities_custom" in body:
+        from plugins.leona_discord.lib.presence import parse_presence_activities
+        target["presence_activities_custom"] = parse_presence_activities(body["presence_activities_custom"])
 
 
 def _apply_top_level_settings(body: dict, stored: dict):
@@ -315,6 +329,8 @@ async def get_settings(**kwargs):
         "servers": stored.get("servers", {}) or {},
         "default_emojis": _DEFAULT_EMOJIS,
         "personality_presets": sorted(p for p in VALID_PRESETS if p != "custom"),
+        "presence_activity_preset_catalog": presence_preset_catalog(),
+        "presence_activity_presets_default": list(DEFAULT_ENABLED_PRESET_IDS),
         **read_reply_context_settings(),
     }
 

@@ -426,52 +426,16 @@ def _read_messages(client, loop, channel_ref=None, count=20):
 
 
 def _apply_mention_map(text: str, channel_id: str) -> str:
-    """Replace @name with <@user_id> using the stored mention map for the channel.
+    """Replace @name / <@name> with <@user_id> using channel map + guild cache."""
+    from plugins.leona_discord.lib.mentions import apply_mention_map_for_channel, resolve_guild_for_channel
 
-    Looks up the map from daemon so it works whether the LLM called
-    discord_send_message directly or the auto-reply path fired.
-
-    Falls back to the guild member cache for names not found in history, so
-    pings work even for members who haven't spoken recently in the channel.
-    """
-    if not channel_id or not text:
-        return text
-    try:
-        import re
-        from plugins.leona_discord.daemon import get_mention_map, _clients
-        mmap = dict(get_mention_map(str(channel_id).strip()))  # local copy — we may mutate it
-
-        # Pre-fetch the guild once so the fallback closure doesn't repeat the lookup
-        _guild_ref = None
-        account = _get_account()
-        if account:
-            client_ref = _clients.get(account)
-            if client_ref and client_ref.is_ready():
-                # Find the guild that contains this channel
-                ch_id_int = int(channel_id.strip())
-                for guild in client_ref.guilds:
-                    if guild.get_channel(ch_id_int):
-                        _guild_ref = guild
-                        break
-
-        def _replace(match):
-            raw_name  = match.group(1)
-            name_lower = raw_name.lower().rstrip()
-            # 1. Fast path — seen in channel history
-            uid = mmap.get(name_lower)
-            if uid:
-                return f"<@{uid}>"
-            # 2. Fallback — guild member cache
-            if _guild_ref:
-                member = _guild_ref.get_member_named(raw_name.rstrip())
-                if member:
-                    mmap[name_lower] = str(member.id)  # warm for subsequent hits
-                    return f"<@{member.id}>"
-            return match.group(0)
-
-        return re.sub(r'@([A-Za-z0-9_.]+(?:\s[A-Za-z0-9_.]+)?)(?=\s|$|[^A-Za-z0-9_. ])', _replace, text)
-    except Exception:
-        return text
+    account = _get_account() or ""
+    guild_id = ""
+    if account:
+        guild = resolve_guild_for_channel(account, channel_id)
+        if guild:
+            guild_id = str(guild.id)
+    return apply_mention_map_for_channel(text, str(channel_id).strip(), account, guild_id)
 
 
 def _send_message(client, loop, channel_ref=None, text="", reply_to_message_id=None,

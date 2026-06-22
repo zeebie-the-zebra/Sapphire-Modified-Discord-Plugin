@@ -1,6 +1,6 @@
 # Leona Discord Plugin
 
-Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.4**
+Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.5**
 
 This is a fork of the stock `plugins/discord` plugin. The stock plugin is **not modified**. **Do not enable both** — they register the same Discord tool names and will conflict.
 
@@ -115,9 +115,33 @@ Disabled by default. Enable under **Memory → User Profiling**. Legacy per-guil
 - **Reply modes**: default, mentions-only, reactions-only, never (global, per-server, or per-channel)
 - **Keyword triggers**, **always-respond role IDs**, allowlists/denylists
 - **Separate DM settings**, **quiet hours (UTC)**, **activity decay**
+- **Random Discord status** — while awake, periodically rotates status/activity on a timer (daemon loop); asleep shows custom status *sleeping*; cycling off clears to online with no activity
 - **Morning greeting** — hourly cron; LLM-written daily message from instructions
 - **Sleep schedule** — goodnight → dormant → wake; buffered overnight @mentions; optional forced wake on repeated pings
 - **Quiet outreach** — proactive starters when channels go quiet
+
+#### Random Discord status (Presence tab)
+
+Configurable ambient presence while the bot is awake (`lib/presence.py`; updated every 1s in the daemon loop, applied on a configurable interval):
+
+| State | Discord presence |
+|-------|------------------|
+| **Asleep** (sleep schedule) | Idle + custom status *sleeping* |
+| **Quiet hours** | Idle, no activity |
+| **Awake + cycling on** | Random pick from enabled presets + custom lines |
+| **Awake + cycling off** | Online, activity cleared |
+
+**Presence tab → Random Discord Status:**
+
+- **Toggle** — enable/disable rotation (default on)
+- **Change every (minutes)** — 5–180 (default 10)
+- **Default activities** — checkboxes grouped by type:
+  - **No activity** — cleared status
+  - **Custom status** — plain vibe text (e.g. *enjoying alone time*, *looking forward to Friday*, *daydreaming*) via Discord `CustomActivity`
+  - **Listening / Watching / Playing / Competing** — typed activities (`listening: chat`, `playing: D&D`, etc.)
+- **Custom activities** — one line per extra entry; plain text = custom status; use `playing:`, `listening:`, `watching:`, or `competing:` prefixes for typed activities; `-` for cleared
+
+Legacy `presence_activities` lists migrate automatically to preset checkboxes + custom lines on load.
 
 ### Discord-native capabilities
 
@@ -181,6 +205,7 @@ leona_discord/
 │   ├── profile_distill_llm.py # LLM fact/summary extraction
 │   ├── llm_debug.py           # Prompt/response capture for debug UI
 │   ├── settings.py            # Settings merge and live reads
+│   ├── presence.py            # Quiet hours, random Discord status cycling
 │   ├── sleep_schedule.py      # Sleep/wake state
 │   ├── store.py               # SQLite: messages, search, traces
 │   └── …                      # reactions, images, safety, typing, etc.

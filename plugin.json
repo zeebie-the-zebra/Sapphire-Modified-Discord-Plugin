@@ -1,8 +1,8 @@
 {
   "name": "leona_discord",
   "short_name": "Leona Discord",
-  "version": "1.5.4",
-  "description": "Leona's modified Discord plugin — bot accounts, messaging, daemon listener",
+  "version": "1.5.6",
+  "description": "Leona's modified Discord plugin — bot accounts, messaging, daemon listener, status cycling, @mention resolution",
   "author": "sapphire",
   "url": "https://sapphireblue.dev",
   "icon": "🎮",

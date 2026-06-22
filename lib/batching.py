@@ -336,6 +336,11 @@ def flush_batch(batch: MessageBatch):
     if edit_hint:
         combined_content = f"{combined_content}\n\n{edit_hint}"
 
+    from plugins.leona_discord.lib.mentions import build_mention_format_hint
+    mention_hint = build_mention_format_hint()
+    if mention_hint:
+        combined_content = f"{combined_content}\n\n{mention_hint}"
+
     recent_history = format_recent_history(full_history, batch.guild_id)
     mention_map = build_mention_map(full_history, messages_to_send)
     store_mention_map(channel_key, mention_map)

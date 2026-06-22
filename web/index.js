@@ -68,6 +68,7 @@ function _formatHourLabel(h) {
 
 // Full emoji list loaded from API; used as the grid source so all 1340 are available
 let _API_EMOJIS = null;
+let _presencePresetCatalog = [];
 
 // Custom Discord emoji input field + add button for building the allowlist.
 // All standard Unicode emoji are always allowed and not shown in the grid.
@@ -1471,6 +1472,7 @@ function _initGlobalSettingsFields(container) {
     _renderGifSettings(container, p);
     _wireGreetingTargetPicker(container, p);
     _wireForcedWakeTest(container, p);
+    _wirePresenceCyclingToggle(container, p);
     _wireOutreachTargetPicker(container, p);
     _wireLocalScheduleHours(container, p);
     _wireProfilingToggle(container, p);
@@ -1938,6 +1940,46 @@ function _personalityFieldsHTML(prefix) {
                     <input type="number" id="${prefix}-activity-threshold" min="2" max="100" value="10" class="dc-input dc-input-sm" style="width:60px" title="Msg threshold">
                     <span>msgs ×</span>
                     <input type="number" id="${prefix}-activity-multiplier" min="0" max="1" step="0.1" value="0.5" class="dc-input dc-input-sm" style="width:60px" title="Chance multiplier">
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>Random Discord Status</label>
+                    <div class="dc-row-help">While awake, rotate status/activity on a timer. Sleep still shows <em>sleeping</em>; when off, status is cleared (online, no activity).</div>
+                </div>
+                <div class="dc-row-control">
+                    <label class="dc-toggle">
+                        <input type="checkbox" id="${prefix}-presence-cycling">
+                        <span class="dc-toggle-track"></span>
+                        <span class="dc-toggle-thumb"></span>
+                    </label>
+                </div>
+            </div>
+            <div id="${prefix}-presence-cycling-options" style="display:none">
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Change Every (minutes)</label>
+                        <div class="dc-row-help">How often to pick a new activity while awake (5–180).</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-presence-interval" min="5" max="180" value="10" class="dc-input dc-input-sm" style="width:70px">
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Default Activities</label>
+                        <div class="dc-row-help">Check the statuses to include in the rotation.</div>
+                    </div>
+                </div>
+                <div id="${prefix}-presence-presets" class="dc-presence-presets"></div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Custom Activities</label>
+                        <div class="dc-row-help">One per line, added on top of checked defaults. Plain text becomes a custom status (e.g. <code>enjoying alone time</code>). Typed prefixes: <code>playing:</code>, <code>listening:</code>, <code>watching:</code>, <code>competing:</code>. Use <code>-</code> for cleared.</div>
+                    </div>
+                    <div class="dc-row-control" style="flex:1;max-width:420px">
+                        <textarea id="${prefix}-presence-custom" class="dc-input" rows="3" placeholder="enjoying alone time&#10;looking forward to Friday&#10;playing: Minecraft"></textarea>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2630,6 +2672,16 @@ async function _sendTestForcedWake(root, prefix) {
 }
 
 
+function _wirePresenceCyclingToggle(root, prefix) {
+    const enabled = root.querySelector(`#${prefix}-presence-cycling`);
+    const opts = root.querySelector(`#${prefix}-presence-cycling-options`);
+    if (!enabled || !opts) return;
+    const sync = () => { opts.style.display = enabled.checked ? 'block' : 'none'; };
+    enabled.addEventListener('change', sync);
+    sync();
+}
+
+
 function _wireForcedWakeTest(root, prefix) {
     const testBtn = root.querySelector(`#${prefix}-forced-wake-test`);
     if (testBtn && !testBtn.dataset.wired) {
@@ -2892,6 +2944,84 @@ function _listToStr(val) {
 }
 
 
+const _PRESENCE_CATEGORY_LABELS = {
+    none: 'No activity',
+    custom: 'Custom status',
+    listening: 'Listening',
+    watching: 'Watching',
+    playing: 'Playing',
+    competing: 'Competing',
+};
+const _PRESENCE_CATEGORY_ORDER = ['none', 'custom', 'listening', 'watching', 'playing', 'competing'];
+
+
+function _renderPresencePresetCheckboxes(root, prefix, catalog) {
+    const mount = root.querySelector(`#${prefix}-presence-presets`);
+    if (!mount || !catalog?.length) return;
+    let html = '';
+    for (const cat of _PRESENCE_CATEGORY_ORDER) {
+        const items = catalog.filter((p) => p.category === cat);
+        if (!items.length) continue;
+        html += `<div class="dc-presence-preset-group" style="margin-bottom:10px">`;
+        html += `<div style="font-weight:600;font-size:0.85em;margin-bottom:4px;color:var(--text-secondary,#99aab5)">${_esc(_PRESENCE_CATEGORY_LABELS[cat] || cat)}</div>`;
+        html += `<div style="display:flex;flex-wrap:wrap;gap:8px 16px">`;
+        for (const p of items) {
+            html += `<label style="display:flex;align-items:center;gap:6px;font-size:0.92em;cursor:pointer">`;
+            html += `<input type="checkbox" class="${prefix}-presence-preset" data-preset-id="${_esc(p.id)}">`;
+            html += `<span>${_esc(p.label)}</span></label>`;
+        }
+        html += `</div></div>`;
+    }
+    mount.innerHTML = html;
+}
+
+
+function _populatePresencePresets(root, prefix, data) {
+    const catalog = data.presence_activity_preset_catalog || _presencePresetCatalog;
+    if (catalog?.length) {
+        _presencePresetCatalog = catalog;
+        _renderPresencePresetCheckboxes(root, prefix, catalog);
+    }
+    const enabled = new Set(data.presence_activity_presets || []);
+    const fallback = new Set(data.presence_activity_presets_default || []);
+    root.querySelectorAll(`.${prefix}-presence-preset`).forEach((el) => {
+        const id = el.dataset.presetId;
+        el.checked = enabled.size ? enabled.has(id) : fallback.has(id);
+    });
+    const customEl = root.querySelector(`#${prefix}-presence-custom`);
+    if (customEl) customEl.value = _presenceCustomToText(data.presence_activities_custom);
+}
+
+
+function _presenceCustomToText(val) {
+    if (!val || !Array.isArray(val) || !val.length) return '';
+    return val.map((line) => {
+        const s = String(line ?? '').trim();
+        return s === '' ? '-' : s;
+    }).join('\n');
+}
+
+
+function _readPresencePresets(root, prefix) {
+    const ids = [];
+    root.querySelectorAll(`.${prefix}-presence-preset:checked`).forEach((el) => {
+        if (el.dataset.presetId) ids.push(el.dataset.presetId);
+    });
+    return ids;
+}
+
+
+function _readPresenceCustom(root, prefix) {
+    const el = root.querySelector(`#${prefix}-presence-custom`);
+    if (!el || !el.value.trim()) return [];
+    return el.value.split('\n').map((line) => {
+        const s = line.trim();
+        if (s === '' || s === '-' || s === '(none)' || s === '(clear)') return '';
+        return s;
+    });
+}
+
+
 function _populatePersonalityFields(root, prefix, data, dmData) {
     const v  = (id, val) => { const e = root.querySelector(`#${id}`); if (e) e.value = val; };
     const c  = (id, val) => { const e = root.querySelector(`#${id}`); if (e) e.checked = !!val; };
@@ -2902,6 +3032,9 @@ function _populatePersonalityFields(root, prefix, data, dmData) {
     c(`${prefix}-activity-decay`, data.activity_decay_enabled);
     v(`${prefix}-activity-threshold`, data.activity_decay_threshold ?? 10);
     v(`${prefix}-activity-multiplier`, data.activity_decay_multiplier ?? 0.5);
+    c(`${prefix}-presence-cycling`, data.presence_cycling_enabled !== false);
+    v(`${prefix}-presence-interval`, data.presence_cycle_interval_minutes ?? 10);
+    _populatePresencePresets(root, prefix, data);
     c(`${prefix}-sleep-enabled`, data.sleep_schedule_enabled);
     v(`${prefix}-sleep-hour`, _utcHourToLocal(data.sleep_utc_hour ?? 22));
     v(`${prefix}-sleep-buffer-max`, data.sleep_buffered_reply_max ?? 3);
@@ -2967,6 +3100,10 @@ function _readPersonalityFields(root, prefix) {
         activity_decay_enabled: b(`${prefix}-activity-decay`),
         activity_decay_threshold: i(`${prefix}-activity-threshold`),
         activity_decay_multiplier: parseFloat(v(`${prefix}-activity-multiplier`) || '0.5'),
+        presence_cycling_enabled: b(`${prefix}-presence-cycling`),
+        presence_cycle_interval_minutes: i(`${prefix}-presence-interval`),
+        presence_activity_presets: _readPresencePresets(root, prefix),
+        presence_activities_custom: _readPresenceCustom(root, prefix),
         sleep_schedule_enabled: b(`${prefix}-sleep-enabled`),
         sleep_utc_hour: _localHourToUtc(i(`${prefix}-sleep-hour`)),
         sleep_buffered_reply_max: i(`${prefix}-sleep-buffer-max`),
@@ -3265,6 +3402,9 @@ async function _loadGlobalSettings(container) {
         const res = await fetch('/api/plugin/leona_discord/settings');
         if (!res.ok) return;
         const data = await res.json();
+        if (data.presence_activity_preset_catalog) {
+            _presencePresetCatalog = data.presence_activity_preset_catalog;
+        }
         const batchEl = container.querySelector('#dc-batch-delay');
         if (batchEl) batchEl.value = data.batch_delay ?? 8;
         const alwaysEl = container.querySelector('#dc-always-online');

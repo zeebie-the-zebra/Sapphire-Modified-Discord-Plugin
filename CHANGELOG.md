@@ -10,6 +10,62 @@ _Nothing yet._
 
 ---
 
+## 1.5.6 — @mention resolution fixes
+
+### Mentions
+
+- **`<@Display Name>` → real ping** — invalid LLM-style mentions (display names inside angle brackets) are rewritten to `<@snowflake>` before send; numeric `<@id>` mentions are left unchanged (`lib/mentions.py`)
+- **Multi-word `@Display Name`** — `@Spike le Vain` and similar names resolve fully (longest-match against the map + guild cache, with a punctuation-aware fallback regex)
+- **Incoming `message.mentions` in map** — users @mentioned in a triggering message are added to the channel mention map even if they have not posted in channel history (`handlers/on_message.py`, `lib/history.py` `build_mention_map`)
+- **Shared resolver** — auto-reply path and `discord_send_message` both use `apply_mention_map` / `apply_mention_map_for_channel` (fixes duplicate logic and broken `daemon.get_mention_map` import in `tools/discord_tools.py`)
+- **LLM hint** — prompts include guidance to write `@DisplayName` only, not `<@DisplayName>` (`lib/batching.py`, `lib/events.py`)
+
+### New / updated modules (v1.5.6)
+
+| Module | Purpose |
+|--------|---------|
+| `lib/mentions.py` | Mention map merge helpers, angle/bare `@` resolution, guild fallback |
+| `lib/history.py` | `build_mention_map` includes `mentioned_users` from queued messages |
+| `handlers/on_message.py` | Serializes `message.mentions` into `mentioned_users` |
+| `tools/discord_tools.py` | Delegates to shared mention resolver |
+
+---
+
+## 1.5.5 — Random Discord status cycling
+
+### Presence
+
+- **Random Discord status** — while awake, the daemon periodically rotates the bot's Discord status/activity (`lib/presence.py`, driven from `daemon.py` every second, applied on a configurable interval)
+- **Sleep integration** — asleep channels set idle + custom status *sleeping*; quiet hours stay idle with no activity; cycling disabled while awake clears to online with no activity
+- **Configurable in UI** (Global Settings → **Presence** tab): master toggle, change interval (5–180 min), preset checkboxes, custom activity lines
+- **Preset catalog** — grouped checkboxes for **No activity**, **Custom status** (vibe phrases), **Listening**, **Watching**, **Playing**, and **Competing** (28 presets total)
+- **Custom status** — plain text (e.g. *enjoying alone time*, *looking forward to Friday*) uses Discord `CustomActivity`, not “Listening to …”
+- **Typed activities** — `playing:`, `listening:`, `watching:`, `competing:` prefixes in presets or custom lines
+- **Legacy migration** — old `presence_activities` text lists map to matching presets + custom lines on read; plain-text aliases (`listening to chat`, etc.) still resolve
+
+### Settings keys (presence cycling)
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `presence_cycling_enabled` | on | Rotate status while awake |
+| `presence_cycle_interval_minutes` | 10 | Minutes between picks (5–180) |
+| `presence_activity_presets` | see defaults | Enabled preset IDs (checkboxes) |
+| `presence_activities_custom` | `[]` | Extra lines (plain = custom status) |
+
+### API
+
+- `GET /api/plugin/leona_discord/settings` — includes `presence_activity_preset_catalog` and `presence_activity_presets_default` for the checkbox UI
+
+### New / updated modules (v1.5.5)
+
+| Module | Purpose |
+|--------|---------|
+| `lib/presence.py` | Preset catalog, activity pool, custom/typed activity parsing, `change_presence` |
+| `web/index.js` | Presence tab: cycling toggle, interval, preset checkboxes, custom textarea |
+| `routes/settings.py` | Save/load presence preset + custom fields |
+
+---
+
 ## 1.5.4 — Packaging & dual placement
 
 ### Manifest
@@ -514,6 +570,9 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 | 1.5.1 | — | Global profiles (cross-guild), cross-guild distillation |
 | 1.5.2 | — | LLM Debug Messaging popup |
 | 1.5.3 | — | Auto typos (711-word list), inline tag hardening, auto-reply delivery guard, debug delivery warnings |
+| 1.5.4 | — | `pip_dependencies`, dual placement (`_compat.py`, `DUAL_PLACEMENT.md`) |
+| 1.5.5 | — | Random Discord status cycling, preset checkboxes, custom status phrases, sleep/quiet-hours presence rules |
+| 1.5.6 | — | @mention resolution: `<@Display Name>` fix, multi-word names, `message.mentions` in map |
 
 ---
 
@@ -525,5 +584,6 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 - **Memory data**: `user/plugin_data/leona_discord/discord_memory.sqlite`
 - **Schedule tasks**: `/ask`, `/summarize`, and normal channel replies require an active `discord_message` daemon task for the bot account
 - **Morning greeting, quiet outreach & sleep schedule**: require bot online (**Always Online** or active Schedule task) plus Sapphire continuity scheduler; hour fields in the UI are local time (saved as UTC)
+- **Random Discord status**: requires bot online (**Always Online** or active Schedule task); daemon loop applies presence changes on the configured interval
 - **GIF replies**: Klipy API key (recommended) or Giphy key; optional fast/cheap LLM for query selection; `requests` used for provider HTTP calls
 - **Tenor**: legacy GIF provider only — migrate to Klipy or Giphy before **June 30, 2026**
