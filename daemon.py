@@ -37,8 +37,34 @@ _resolve_custom_emoji = resolve_custom_emoji
 _channel_key = state.channel_key
 
 
+def _warn_if_asyncio_shutdown_missing() -> None:
+    """Warn when Sapphire core lacks graceful asyncio shutdown helpers."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.find_spec("core.asyncio_shutdown")
+    if spec is not None and spec.origin not in (None, "built-in", "frozen"):
+        return
+
+    core_spec = importlib.util.find_spec("core")
+    core_dir = None
+    if core_spec is not None and core_spec.submodule_search_locations:
+        core_dir = Path(core_spec.submodule_search_locations[0])
+    elif core_spec is not None and core_spec.origin not in (None, "built-in", "frozen"):
+        core_dir = Path(core_spec.origin).resolve().parent
+
+    if core_dir is not None and (core_dir / "asyncio_shutdown.py").is_file():
+        return
+
+    logger.warning(
+        "[DISCORD] core/asyncio_shutdown.py is missing — graceful daemon shutdown "
+        "is unavailable; expect import errors or asyncio warnings when Sapphire exits."
+    )
+
+
 def start(plugin_loader, settings):
     """Called by plugin_loader on load. Starts the daemon thread."""
+    _warn_if_asyncio_shutdown_missing()
     with state._lifecycle_lock:
         state.set_plugin_loader(plugin_loader)
         state._stop_event.clear()
@@ -75,12 +101,6 @@ def stop():
                     except Exception:
                         pass
                 state._clients.clear()
-                current = asyncio.current_task()
-                pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
-                for task in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
 
             try:
                 future = asyncio.run_coroutine_threadsafe(_shutdown(), loop)
@@ -132,7 +152,7 @@ def _run_loop():
 
     try:
         state._loop.run_until_complete(_main())
-    except Exception as e:
+    except BaseException as e:
         if not state._stop_event.is_set():
             logger.error(f"[DISCORD] Daemon loop crashed: {e}", exc_info=True)
     finally:
