@@ -6,28 +6,7 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ## Unreleased
 
-_Nothing yet._
-
----
-
-## 1.5.6 — @mention resolution fixes
-
-### Mentions
-
-- **`<@Display Name>` → real ping** — invalid LLM-style mentions (display names inside angle brackets) are rewritten to `<@snowflake>` before send; numeric `<@id>` mentions are left unchanged (`lib/mentions.py`)
-- **Multi-word `@Display Name`** — `@Spike le Vain` and similar names resolve fully (longest-match against the map + guild cache, with a punctuation-aware fallback regex)
-- **Incoming `message.mentions` in map** — users @mentioned in a triggering message are added to the channel mention map even if they have not posted in channel history (`handlers/on_message.py`, `lib/history.py` `build_mention_map`)
-- **Shared resolver** — auto-reply path and `discord_send_message` both use `apply_mention_map` / `apply_mention_map_for_channel` (fixes duplicate logic and broken `daemon.get_mention_map` import in `tools/discord_tools.py`)
-- **LLM hint** — prompts include guidance to write `@DisplayName` only, not `<@DisplayName>` (`lib/batching.py`, `lib/events.py`)
-
-### New / updated modules (v1.5.6)
-
-| Module | Purpose |
-|--------|---------|
-| `lib/mentions.py` | Mention map merge helpers, angle/bare `@` resolution, guild fallback |
-| `lib/history.py` | `build_mention_map` includes `mentioned_users` from queued messages |
-| `handlers/on_message.py` | Serializes `message.mentions` into `mentioned_users` |
-| `tools/discord_tools.py` | Delegates to shared mention resolver |
+*Nothing yet.*
 
 ---
 
@@ -38,19 +17,21 @@ _Nothing yet._
 - **Random Discord status** — while awake, the daemon periodically rotates the bot's Discord status/activity (`lib/presence.py`, driven from `daemon.py` every second, applied on a configurable interval)
 - **Sleep integration** — asleep channels set idle + custom status *sleeping*; quiet hours stay idle with no activity; cycling disabled while awake clears to online with no activity
 - **Configurable in UI** (Global Settings → **Presence** tab): master toggle, change interval (5–180 min), preset checkboxes, custom activity lines
-- **Preset catalog** — grouped checkboxes for **No activity**, **Custom status** (vibe phrases), **Listening**, **Watching**, **Playing**, and **Competing** (28 presets total)
+- **Preset catalog** — grouped checkboxes for **No activity**, **Custom status** (vibe phrases), **Listening**, **Watching**, **Playing**, and **Competing** (29 presets total)
 - **Custom status** — plain text (e.g. *enjoying alone time*, *looking forward to Friday*) uses Discord `CustomActivity`, not “Listening to …”
 - **Typed activities** — `playing:`, `listening:`, `watching:`, `competing:` prefixes in presets or custom lines
 - **Legacy migration** — old `presence_activities` text lists map to matching presets + custom lines on read; plain-text aliases (`listening to chat`, etc.) still resolve
 
 ### Settings keys (presence cycling)
 
-| Key | Default | Purpose |
-|-----|---------|---------|
-| `presence_cycling_enabled` | on | Rotate status while awake |
-| `presence_cycle_interval_minutes` | 10 | Minutes between picks (5–180) |
-| `presence_activity_presets` | see defaults | Enabled preset IDs (checkboxes) |
-| `presence_activities_custom` | `[]` | Extra lines (plain = custom status) |
+
+| Key                               | Default      | Purpose                             |
+| --------------------------------- | ------------ | ----------------------------------- |
+| `presence_cycling_enabled`        | on           | Rotate status while awake           |
+| `presence_cycle_interval_minutes` | 10           | Minutes between picks (5–180)       |
+| `presence_activity_presets`       | see defaults | Enabled preset IDs (checkboxes)     |
+| `presence_activities_custom`      | `[]`         | Extra lines (plain = custom status) |
+
 
 ### API
 
@@ -58,11 +39,13 @@ _Nothing yet._
 
 ### New / updated modules (v1.5.5)
 
-| Module | Purpose |
-|--------|---------|
-| `lib/presence.py` | Preset catalog, activity pool, custom/typed activity parsing, `change_presence` |
-| `web/index.js` | Presence tab: cycling toggle, interval, preset checkboxes, custom textarea |
-| `routes/settings.py` | Save/load presence preset + custom fields |
+
+| Module               | Purpose                                                                         |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `lib/presence.py`    | Preset catalog, activity pool, custom/typed activity parsing, `change_presence` |
+| `web/index.js`       | Presence tab: cycling toggle, interval, preset checkboxes, custom textarea      |
+| `routes/settings.py` | Save/load presence preset + custom fields                                       |
+
 
 ---
 
@@ -70,17 +53,17 @@ _Nothing yet._
 
 ### Manifest
 
-- **`pip_dependencies`** — `discord.py` and `vaderSentiment` declared in `plugin.json`; Sapphire checks them before load and surfaces missing packages in the UI
+- `**pip_dependencies`** — `discord.py` and `vaderSentiment` declared in `plugin.json`; Sapphire checks them before load and surfaces missing packages in the UI
 
 ### Dual placement
 
-- **`_compat.py`** — portable `plugins.leona_discord` imports from either `plugins/leona_discord/` or `user/plugins/leona_discord/` (mempalace pattern)
+- `**_compat.py**` — portable `plugins.leona_discord` imports from either `plugins/leona_discord/` or `user/plugins/leona_discord/` (mempalace pattern)
 - **Entry-point bootstraps** — `daemon.py`, `tools/discord_tools.py`, all `routes/*.py`, all `schedule/*.py`
-- **`DUAL_PLACEMENT.md`** — install paths, test checklist, coexistence notes
+- `**DUAL_PLACEMENT.md`** — install paths, test checklist, coexistence notes
 
 ### Docs
 
-- **`README.md`** — installation section (`plugins/` vs `user/plugins/`), dependency table, stock `discord` mutual-exclusion note, dual-placement link
+- `**README.md**` — installation section (`plugins/` vs `user/plugins/`), dependency table, stock `discord` mutual-exclusion note, dual-placement link
 
 ---
 
@@ -89,21 +72,21 @@ _Nothing yet._
 ### Auto typos
 
 - **Auto Typos** — optional human-like spelling mistakes: pick one word from a **711-entry** list (`lib/typo_wordlist.py`), send the typo version, then edit back to the correct text after a configurable delay (`lib/auto_typo.py`)
-- Skipped when the user's message contains **`?`**
+- Skipped when the user's message contains `**?`**
 - Settings (Global → **Reactions & Media → Message Edits**): `auto_typo_enabled` (default off), `auto_typo_chance` (0–100%, default 12), `auto_typo_delay_min` / `auto_typo_delay_max` (default 2–6s)
 - Runs only when `message_edits_enabled` is on; **LLM `[edit:…]` tags take priority**; falls back to legacy ~4% random typo/thought edits when auto typos do not fire
 - Word list covers function words, fat-finger transpositions, classic traps (ie/ei, doubled letters), homophone slips, chat/tech terms, and contractions
 
 ### Inline tags & reply handler
 
-- **`lib/inline_tags.py`** — shared parse/strip for `[edit:…]`, `[react:…]`, `[gif:…]`, malformed trailing tags, and emoji placeholders
-- **`[edit:…]`** — fixes last line on multiline replies; handles missing closing `]`; trailing-typo phrase replacement on long single-line replies
-- **`[react:…]`** — inline reactions apply after send; respect `reactions_enabled`, `react_to_trigger`, and cooldown; **mark reacted only after Discord confirms** (failed reactions no longer block retries)
-- **`[gif:…]`** — unchanged follow-up path; malformed `[gif:…` at end stripped safely
+- `**lib/inline_tags.py`** — shared parse/strip for `[edit:…]`, `[react:…]`, `[gif:…]`, malformed trailing tags, and emoji placeholders
+- `**[edit:…]**` — fixes last line on multiline replies; handles missing closing `]`; trailing-typo phrase replacement on long single-line replies
+- `**[react:…]**` — inline reactions apply after send; respect `reactions_enabled`, `react_to_trigger`, and cooldown; **mark reacted only after Discord confirms** (failed reactions no longer block retries)
+- `**[gif:…]`** — unchanged follow-up path; malformed `[gif:…` at end stripped safely
 
 ### Delivery & tools
 
-- **`discord_send_message` blocked** on the triggering channel when the daemon task has **auto-reply** on — returns a hint to use plain text + inline tags instead of posting raw LLM output that bypasses tag stripping (`tools/discord_tools.py`, `core/continuity/executor.py` `current_event_task`)
+- `**discord_send_message` blocked** on the triggering channel when the daemon task has **auto-reply** on — returns a hint to use plain text + inline tags instead of posting raw LLM output that bypasses tag stripping (`tools/discord_tools.py`, `core/continuity/executor.py` `current_event_task`)
 - Tool sends to other channels still **sanitize inline tags** before post
 - **LLM debug** records `delivery_path` (`tool` vs auto-reply) and `discord_sent_text` when the tool path wins; UI shows a warning banner (`lib/llm_debug.py`, `web/index.js`)
 
@@ -114,20 +97,24 @@ _Nothing yet._
 
 ### Settings keys (auto typos)
 
-| Key | Default | Purpose |
-|-----|---------|---------|
-| `auto_typo_enabled` | off | Master auto-typo toggle |
-| `auto_typo_chance` | 12 | Probability per eligible reply (0–100) |
-| `auto_typo_delay_min` | 2.0 | Min seconds before typo fix edit |
-| `auto_typo_delay_max` | 6.0 | Max seconds before typo fix edit |
+
+| Key                   | Default | Purpose                                |
+| --------------------- | ------- | -------------------------------------- |
+| `auto_typo_enabled`   | off     | Master auto-typo toggle                |
+| `auto_typo_chance`    | 12      | Probability per eligible reply (0–100) |
+| `auto_typo_delay_min` | 2.0     | Min seconds before typo fix edit       |
+| `auto_typo_delay_max` | 6.0     | Max seconds before typo fix edit       |
+
 
 ### New / updated modules (v1.5.3)
 
-| Module | Purpose |
-|--------|---------|
-| `lib/auto_typo.py` | Auto-typo chance roll, delay, question skip |
-| `lib/typo_wordlist.py` | Large correct→typo dictionary |
-| `lib/inline_tags.py` | Inline tag parse/strip/sanitize |
+
+| Module                 | Purpose                                     |
+| ---------------------- | ------------------------------------------- |
+| `lib/auto_typo.py`     | Auto-typo chance roll, delay, question skip |
+| `lib/typo_wordlist.py` | Large correct→typo dictionary               |
+| `lib/inline_tags.py`   | Inline tag parse/strip/sanitize             |
+
 
 ---
 
@@ -198,8 +185,8 @@ _Nothing yet._
 ### Contextual typing speed
 
 - Typing duration now adapts to reply content instead of a flat 65 WPM:
-  - **Short replies** (&lt;50 chars): 80–100 WPM
-  - **Long paragraphs** (&gt;200 chars): 45–55 WPM
+  - **Short replies** (<50 chars): 80–100 WPM
+  - **Long paragraphs** (>200 chars): 45–55 WPM
   - **Code / technical content**: 30–40 WPM (fenced blocks, inline backticks, or dense punctuation)
   - Default band remains ~65 WPM with ±20% jitter
 
@@ -214,7 +201,7 @@ _Nothing yet._
 
 ### Message sending patterns
 
-- **Contextual quote-replies** (`lib/reply_style.py`): DMs use lower quote chance (10–20%); busy batches (&gt;5 msgs) use 65%; rapid back-and-forth after a bot reply skips quoting; ongoing threads boost chance; questions always quote; jokes/comments and media reactions send standalone
+- **Contextual quote-replies** (`lib/reply_style.py`): DMs use lower quote chance (10–20%); busy batches (>5 msgs) use 65%; rapid back-and-forth after a bot reply skips quoting; ongoing threads boost chance; questions always quote; jokes/comments and media reactions send standalone
 - **Post-send edits**: ~**4%** of single-chunk replies are sent with a subtle typo or plain text, then edited after **2–5s** to fix the typo or append a casual thought (`lib/send.py` `edit_message`, `handlers/reply_handler.py`)
 - **LLM-requested edits**: the model can append `[edit:corrected text]` to occasionally fix a typo or expand a thought after sending; the tag is stripped and a prompt hint is injected at batch time (`message_edits_enabled`, default on; toggle in Global Settings → Message Edits)
 - **Casual emoji suffix**: ~**12.5%** of short (≤80 char) positive replies get a trailing emoji when the LLM did not already include one
@@ -250,31 +237,37 @@ _Nothing yet._
 
 ### Settings keys (sleep & forced wake)
 
-| Key | Default | Purpose |
-|-----|---------|---------|
-| `sleep_schedule_enabled` | off | Master sleep toggle |
-| `sleep_utc_hour` | 22 | Goodnight hour (UTC, set via local-time UI) |
-| `sleep_buffered_reply_max` | 3 | Max morning drain replies |
-| `sleep_forced_wake_enabled` | off | Forced wake toggle |
-| `sleep_forced_wake_mention_count` | 3 | @mentions required in window |
-| `sleep_forced_wake_window_minutes` | 15 | Rolling count window |
-| `sleep_forced_wake_duration_minutes` | 30 | Temporary awake period |
+
+| Key                                  | Default | Purpose                                     |
+| ------------------------------------ | ------- | ------------------------------------------- |
+| `sleep_schedule_enabled`             | off     | Master sleep toggle                         |
+| `sleep_utc_hour`                     | 22      | Goodnight hour (UTC, set via local-time UI) |
+| `sleep_buffered_reply_max`           | 3       | Max morning drain replies                   |
+| `sleep_forced_wake_enabled`          | off     | Forced wake toggle                          |
+| `sleep_forced_wake_mention_count`    | 3       | @mentions required in window                |
+| `sleep_forced_wake_window_minutes`   | 15      | Rolling count window                        |
+| `sleep_forced_wake_duration_minutes` | 30      | Temporary awake period                      |
+
 
 ### New / updated modules (v1.4.0)
 
-| Module | Purpose |
-|--------|---------|
-| `lib/sleep_schedule.py` | Sleep/wake state, goodnight timing, target channels |
-| `lib/sleep_buffer.py` | Drain buffered overnight @mentions after morning wake |
-| `lib/sleep_forced_wake.py` | Threshold-based forced wake while asleep |
-| `lib/goodnight_llm.py` | LLM-generated goodnight text |
-| `schedule/sleep_goodnight.py` | Periodic goodnight + enter sleep state |
+
+| Module                        | Purpose                                               |
+| ----------------------------- | ----------------------------------------------------- |
+| `lib/sleep_schedule.py`       | Sleep/wake state, goodnight timing, target channels   |
+| `lib/sleep_buffer.py`         | Drain buffered overnight @mentions after morning wake |
+| `lib/sleep_forced_wake.py`    | Threshold-based forced wake while asleep              |
+| `lib/goodnight_llm.py`        | LLM-generated goodnight text                          |
+| `schedule/sleep_goodnight.py` | Periodic goodnight + enter sleep state                |
+
 
 ### Schedule additions (v1.4.0)
 
-| Job | Cron | Handler |
-|-----|------|---------|
+
+| Job               | Cron           | Handler                       |
+| ----------------- | -------------- | ----------------------------- |
 | `sleep_goodnight` | `*/15 * * * *` | `schedule/sleep_goodnight.py` |
+
 
 ---
 
@@ -316,14 +309,14 @@ _Nothing yet._
 - Settings: enable toggle, reply chance %, cooldown, content filter, optional query model provider/name
 - Per-channel GIF cooldown tracked separately from reply/reaction cooldowns (`lib/cooldowns.py`)
 - **Greeting ↔ outreach coordination** (`lib/proactive_guard.py`): successful morning greetings record the outreach cooldown; outreach skips greeting-target channels for 2 hours before the greeting wake hour
-- **`discord_send_gif` tool** — LLM can explicitly search and post a GIF (use instead of `web_search` / `get_website`)
-- **`[gif:search terms]` inline tag** — optional follow-up GIF after text reply (stripped before send, like `[react:emoji]`)
+- `**discord_send_gif` tool** — LLM can explicitly search and post a GIF (use instead of `web_search` / `get_website`)
+- `**[gif:search terms]` inline tag** — optional follow-up GIF after text reply (stripped before send, like `[react:emoji]`)
 - When the user asks for a GIF, automatic follow-up **bypasses the chance roll** (`user_requested_gif`)
 - Prompt hint injected into daemon events when GIF replies are enabled (`build_gif_hint`)
 - Fixed settings merge: `get_gif_settings()` reads top-level saved keys (`gif_api_key`, `gif_replies_enabled`, etc.)
-- **`discord_send_gif` tool** no longer blocked by the automatic-follow-up toggle (only needs API key); daemon event context used for channel/guild routing when ContextVars unset
-- **`discord_send_gif` / Discord tools** resolve bot account from daemon event payload when `discord_scope` is `none` (common on scheduled Discord reply tasks)
-- **`discord_send_gif` no longer suppresses the text auto-reply** — only `discord_send_message` / upload increment the send-count guard
+- `**discord_send_gif` tool** no longer blocked by the automatic-follow-up toggle (only needs API key); daemon event context used for channel/guild routing when ContextVars unset
+- `**discord_send_gif` / Discord tools** resolve bot account from daemon event payload when `discord_scope` is `none` (common on scheduled Discord reply tasks)
+- `**discord_send_gif` no longer suppresses the text auto-reply** — only `discord_send_message` / upload increment the send-count guard
 - **Reply LLM context in plugin UI** — edit `LLM Max History` (global) and `Reply Context Limit` (Discord Bot Reply Schedule task) under Global Settings; syncs to `user/settings.json` and `user/continuity/tasks.json` on save
 - Channel name resolution prefers the triggering server's guild (avoids wrong-channel GIF sends when names collide)
 - Improved logging when GIF follow-up is skipped or fails (was silent before)
@@ -331,7 +324,7 @@ _Nothing yet._
 ### GIF search providers (Tenor → Klipy / Giphy)
 
 - Google **Tenor API** is deprecated (no new keys from Jan 2026; shutdown **Jun 30, 2026**)
-- New unified search layer: **`lib/gif_search.py`**
+- New unified search layer: `**lib/gif_search.py`**
   - **Klipy** (default) — Tenor-compatible `api.klipy.com/v2/search`; sign up at [partner.klipy.com](https://partner.klipy.com)
   - **Giphy** — `api.giphy.com/v1/gifs/search`; key from [developers.giphy.com](https://developers.giphy.com)
   - **Tenor (legacy)** — existing Google keys until shutdown
@@ -341,25 +334,29 @@ _Nothing yet._
 ### Settings UI fixes
 
 - **Image Understanding** (vision model) panel was never rendered — missing `#dc-image-settings` mount point in the settings template; now visible with provider dropdown, model name, and max tokens
-- Separate **`#dc-gif-settings`** mount for GIF / meme reply controls
+- Separate `**#dc-gif-settings`** mount for GIF / meme reply controls
 - Global settings load merges top-level saved values (greetings, outreach, GIF keys) into form fields correctly
 
 ### New / updated modules
 
-| Module | Purpose |
-|--------|---------|
-| `lib/greeting_llm.py` | LLM-generated morning greeting text |
-| `lib/outreach_llm.py` | LLM-generated quiet-channel outreach text |
-| `schedule/quiet_outreach.py` | Periodic quiet-channel sweep |
-| `lib/gif_search.py` | Klipy / Giphy / legacy Tenor GIF search |
-| `lib/gif_query_llm.py` | Micro-LLM Tenor/GIF search query picker |
-| `lib/gifs.py` | Automatic GIF follow-up orchestration |
+
+| Module                       | Purpose                                   |
+| ---------------------------- | ----------------------------------------- |
+| `lib/greeting_llm.py`        | LLM-generated morning greeting text       |
+| `lib/outreach_llm.py`        | LLM-generated quiet-channel outreach text |
+| `schedule/quiet_outreach.py` | Periodic quiet-channel sweep              |
+| `lib/gif_search.py`          | Klipy / Giphy / legacy Tenor GIF search   |
+| `lib/gif_query_llm.py`       | Micro-LLM Tenor/GIF search query picker   |
+| `lib/gifs.py`                | Automatic GIF follow-up orchestration     |
+
 
 ### Schedule additions
 
-| Job | Cron | Handler |
-|-----|------|---------|
+
+| Job              | Cron           | Handler                      |
+| ---------------- | -------------- | ---------------------------- |
 | `quiet_outreach` | `*/15 * * * *` | `schedule/quiet_outreach.py` |
+
 
 ---
 
@@ -369,19 +366,19 @@ _Nothing yet._
 
 - Added `/ask`, `/summarize`, and `/remember` via `handlers/slash_commands.py`
 - Commands register on bot connect and sync globally (`CommandTree.sync()`)
-- **`/ask`** — emits a `discord_message` daemon event with the user's prompt (requires an active Schedule task)
-- **`/summarize`** — builds a transcript from channel history and sends a summarize prompt to the LLM (5–50 messages)
-- **`/remember`** — saves text to self-contained SQLite pinned memory (works immediately, no Schedule task)
+- `**/ask**` — emits a `discord_message` daemon event with the user's prompt (requires an active Schedule task)
+- `**/summarize**` — builds a transcript from channel history and sends a summarize prompt to the LLM (5–50 messages)
+- `**/remember**` — saves text to self-contained SQLite pinned memory (works immediately, no Schedule task)
 - Global toggle: **Slash Commands** in plugin settings
 
 ### Rich messages
 
 - Auto-replies now **quote the triggering message** via Discord `message.reference`
 - `reply_to_message_id` included on all daemon event payloads
-- Extended **`discord_send_message`** tool:
+- Extended `**discord_send_message`** tool:
   - `reply_to_message_id`
   - `embed_title`, `embed_description`, `embed_color`
-- New **`discord_upload_file`** tool — upload a file with optional caption
+- New `**discord_upload_file**` tool — upload a file with optional caption
 - Shared send stack: `lib/send.py`, `lib/embeds.py`
 
 ### Moderation & safety
@@ -401,12 +398,14 @@ _Nothing yet._
 
 ### New / updated modules
 
-| Module | Purpose |
-|--------|---------|
-| `lib/events.py` | Build and emit `discord_message` events (slash + shared path) |
-| `lib/embeds.py` | Embed construction and color parsing |
-| `lib/safety.py` | Permissions, rate limits, content filter |
-| `handlers/slash_commands.py` | Slash command handlers |
+
+| Module                       | Purpose                                                       |
+| ---------------------------- | ------------------------------------------------------------- |
+| `lib/events.py`              | Build and emit `discord_message` events (slash + shared path) |
+| `lib/embeds.py`              | Embed construction and color parsing                          |
+| `lib/safety.py`              | Permissions, rate limits, content filter                      |
+| `handlers/slash_commands.py` | Slash command handlers                                        |
+
 
 ---
 
@@ -416,7 +415,7 @@ _Nothing yet._
 
 - Presets: **Lurker**, **Helper**, **Chatterbox**, **Moderator** (`lib/presets.py`)
 - Preset dropdown in settings; fills underlying sliders on selection
-- **`custom`** preset when values are hand-tuned
+- `**custom`** preset when values are hand-tuned
 
 ### Reply modes & access control
 
@@ -461,10 +460,10 @@ _Nothing yet._
 
 - **No MemPalace or other Sapphire plugins required** — all memory lives inside `leona_discord`
 - SQLite store at `user/plugin_data/leona_discord/discord_memory.sqlite`
-- **`lib/store.py`** — messages, keyword search, debug traces, retention (10k messages/channel)
-- **`lib/history.py`** — hot in-memory cache (100 messages/channel) synced to SQLite on write; survives restarts
-- **`lib/memory.py`** — seamless auto-recall injected at batch flush (no tool calls)
-- **`lib/paths.py`** — plugin data directory helpers
+- `**lib/store.py`** — messages, keyword search, debug traces, retention (10k messages/channel)
+- `**lib/history.py**` — hot in-memory cache (100 messages/channel) synced to SQLite on write; survives restarts
+- `**lib/memory.py**` — seamless auto-recall injected at batch flush (no tool calls)
+- `**lib/paths.py**` — plugin data directory helpers
 
 ### Seamless prompt injection
 
@@ -482,8 +481,8 @@ _Nothing yet._
 
 ### Debug traces
 
-- **`lib/trace.py`** — gate-by-gate “why didn’t I respond?” logging to SQLite
-- **`routes/traces.py`** — `GET /traces`, `GET /memory/stats`
+- `**lib/trace.py`** — gate-by-gate “why didn’t I respond?” logging to SQLite
+- `**routes/traces.py**` — `GET /traces`, `GET /memory/stats`
 - Settings UI: **Response Debug Traces** panel
 - Global toggle: `debug_trace_enabled`
 
@@ -510,36 +509,40 @@ leona_discord/
 └── web/                   # Settings UI
 ```
 
-| Module | Purpose |
-|--------|---------|
-| `lib/batching.py` | Per-channel message batching and event emission |
-| `lib/connection.py` | Connect/disconnect with rate-limit safeguards |
-| `lib/context_cache.py` | Reply context, pending payloads, reaction dedupe |
-| `lib/cooldowns.py` | Probabilistic reply cooldown tracking |
-| `lib/history.py` | Channel history (initial in-memory; Stage 2 adds SQLite) |
-| `lib/images.py` | Image collection and vision-model description |
-| `lib/mentions.py` | @name and custom emoji resolution |
-| `lib/messages.py` | Long message splitting |
-| `lib/reactions.py` | Sentiment-based silent reactions |
-| `lib/send.py` | Discord send helper |
-| `lib/settings.py` | Settings merge and live reads |
-| `lib/state.py` | Shared daemon state |
-| `lib/typing_indicator.py` | Typing indicator during waits |
-| `handlers/on_message.py` | Message event handler |
-| `handlers/reply_handler.py` | LLM response routing back to channels |
+
+| Module                      | Purpose                                                  |
+| --------------------------- | -------------------------------------------------------- |
+| `lib/batching.py`           | Per-channel message batching and event emission          |
+| `lib/connection.py`         | Connect/disconnect with rate-limit safeguards            |
+| `lib/context_cache.py`      | Reply context, pending payloads, reaction dedupe         |
+| `lib/cooldowns.py`          | Probabilistic reply cooldown tracking                    |
+| `lib/history.py`            | Channel history (initial in-memory; Stage 2 adds SQLite) |
+| `lib/images.py`             | Image collection and vision-model description            |
+| `lib/mentions.py`           | @name and custom emoji resolution                        |
+| `lib/messages.py`           | Long message splitting                                   |
+| `lib/reactions.py`          | Sentiment-based silent reactions                         |
+| `lib/send.py`               | Discord send helper                                      |
+| `lib/settings.py`           | Settings merge and live reads                            |
+| `lib/state.py`              | Shared daemon state                                      |
+| `lib/typing_indicator.py`   | Typing indicator during waits                            |
+| `handlers/on_message.py`    | Message event handler                                    |
+| `handlers/reply_handler.py` | LLM response routing back to channels                    |
+
 
 Public API re-exported from `daemon.py` for backward compatibility (`get_client`, `get_loop`, `_connect_single`, etc.).
 
 ### Reliability improvements
 
-| Feature | Behavior |
-|---------|----------|
-| **Send-count guard** | `discord_send_message` increments per-account counter; reply handler skips if tool already sent |
-| **`auto_reply` respect** | Reply handler honors per-task `auto_reply`; defaults **on** when unset |
-| **Connect cooldown & stagger** | Reconnect cooldown; 5s stagger between multi-account connects |
-| **429 retry** | Up to 3 connect attempts with backoff on rate limit |
-| **Always online toggle** | Connect all accounts on startup, or only when a Schedule daemon task is active |
-| **Event-not-accepted cleanup** | Clears pending reply state when no task accepts the batch |
+
+| Feature                        | Behavior                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| **Send-count guard**           | `discord_send_message` increments per-account counter; reply handler skips if tool already sent |
+| `**auto_reply` respect**       | Reply handler honors per-task `auto_reply`; defaults **on** when unset                          |
+| **Connect cooldown & stagger** | Reconnect cooldown; 5s stagger between multi-account connects                                   |
+| **429 retry**                  | Up to 3 connect attempts with backoff on rate limit                                             |
+| **Always online toggle**       | Connect all accounts on startup, or only when a Schedule daemon task is active                  |
+| **Event-not-accepted cleanup** | Clears pending reply state when no task accepts the batch                                       |
+
 
 ### Production cleanup
 
@@ -558,21 +561,22 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 
 ## Version summary
 
-| Version | Stage | Focus |
-|---------|-------|--------|
-| — | Stage 1 | Modular architecture, reliability, cleanup |
-| — | Stage 2 | SQLite memory, seamless recall, debug traces, context caps |
-| 1.1.0 | Stage 3 | Presets, reply modes, presence, safety-adjacent gates |
-| 1.2.0 | Stage 4 | Slash commands, rich messages, moderation layer |
-| 1.3.0 | Stage 5 | LLM greetings, quiet outreach, GIF replies, vision UI fix |
-| 1.4.0 | — | Human-like timing, sleep schedule, forced wake, tabbed UI, local-time schedules, proactive identity fixes, engagement behavior |
-| 1.5.0 | — | User profiling (disposition, facts, distiller, `/forget-me`) |
-| 1.5.1 | — | Global profiles (cross-guild), cross-guild distillation |
-| 1.5.2 | — | LLM Debug Messaging popup |
-| 1.5.3 | — | Auto typos (711-word list), inline tag hardening, auto-reply delivery guard, debug delivery warnings |
-| 1.5.4 | — | `pip_dependencies`, dual placement (`_compat.py`, `DUAL_PLACEMENT.md`) |
-| 1.5.5 | — | Random Discord status cycling, preset checkboxes, custom status phrases, sleep/quiet-hours presence rules |
-| 1.5.6 | — | @mention resolution: `<@Display Name>` fix, multi-word names, `message.mentions` in map |
+
+| Version | Stage   | Focus                                                                                                                          |
+| ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| —       | Stage 1 | Modular architecture, reliability, cleanup                                                                                     |
+| —       | Stage 2 | SQLite memory, seamless recall, debug traces, context caps                                                                     |
+| 1.1.0   | Stage 3 | Presets, reply modes, presence, safety-adjacent gates                                                                          |
+| 1.2.0   | Stage 4 | Slash commands, rich messages, moderation layer                                                                                |
+| 1.3.0   | Stage 5 | LLM greetings, quiet outreach, GIF replies, vision UI fix                                                                      |
+| 1.4.0   | —       | Human-like timing, sleep schedule, forced wake, tabbed UI, local-time schedules, proactive identity fixes, engagement behavior |
+| 1.5.0   | —       | User profiling (disposition, facts, distiller, `/forget-me`)                                                                   |
+| 1.5.1   | —       | Global profiles (cross-guild), cross-guild distillation                                                                        |
+| 1.5.2   | —       | LLM Debug Messaging popup                                                                                                      |
+| 1.5.3   | —       | Auto typos (711-word list), inline tag hardening, auto-reply delivery guard, debug delivery warnings                           |
+| 1.5.4   | —       | `pip_dependencies`, dual placement (`_compat.py`, `DUAL_PLACEMENT.md`)                                                         |
+| 1.5.5   | —       | Random Discord status cycling, preset checkboxes, custom status phrases, sleep/quiet-hours presence rules                      |
+
 
 ---
 
@@ -587,3 +591,4 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 - **Random Discord status**: requires bot online (**Always Online** or active Schedule task); daemon loop applies presence changes on the configured interval
 - **GIF replies**: Klipy API key (recommended) or Giphy key; optional fast/cheap LLM for query selection; `requests` used for provider HTTP calls
 - **Tenor**: legacy GIF provider only — migrate to Klipy or Giphy before **June 30, 2026**
+

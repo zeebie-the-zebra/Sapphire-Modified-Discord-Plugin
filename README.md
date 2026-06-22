@@ -4,7 +4,7 @@ Personality-oriented Discord integration for Sapphire — long-running bot daemo
 
 This is a fork of the stock `plugins/discord` plugin. The stock plugin is **not modified**. **Do not enable both** — they register the same Discord tool names and will conflict.
 
-For detailed settings documentation, see [`configuration_guide.md`](configuration_guide.md). For profiling internals, see [`user_profiling_design.md`](user_profiling_design.md). For install paths (`plugins/` vs `user/plugins/`), see [`DUAL_PLACEMENT.md`](DUAL_PLACEMENT.md). For release history, see [`CHANGELOG.md`](CHANGELOG.md).
+For detailed settings documentation, see [`configuration_guide.md`](configuration_guide.md). For profiling status, see [`user_profiling_design.md`](user_profiling_design.md) or the [User profiling](configuration_guide.md#user-profiling) section in the configuration guide. For install paths (`plugins/` vs `user/plugins/`), see [`DUAL_PLACEMENT.md`](DUAL_PLACEMENT.md). For release history, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 
@@ -223,8 +223,9 @@ leona_discord/
 │   └── discord_tools.py
 ├── web/
 │   └── index.js               # Tabbed settings UI
-├── configuration_guide.md     # Detailed settings reference
-├── user_profiling_design.md   # Profiling design + implementation notes
+├── configuration_guide.md     # Detailed settings reference (incl. user profiling)
+├── user_profiling_design.md   # Profiling implementation status appendix
+├── Roadmap.md                 # Done vs pending features
 ├── CHANGELOG.md
 └── plugin.json
 ```

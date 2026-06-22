@@ -16,20 +16,21 @@ Open settings in Sapphire at **Settings → Leona Discord** (or `/settings` with
 6. [Reply gating (when the bot speaks)](#reply-gating-when-the-bot-speaks)
 7. [Human-like behavior](#human-like-behavior)
 8. [Memory](#memory)
-9. [Reactions](#reactions)
-10. [Image understanding](#image-understanding)
-11. [GIF follow-ups](#gif-follow-ups)
-12. [Presence, quiet hours & activity decay](#presence-quiet-hours--activity-decay)
-13. [Morning greeting](#morning-greeting)
-14. [Sleep schedule](#sleep-schedule)
-15. [Quiet channel outreach](#quiet-channel-outreach)
-16. [Direct messages](#direct-messages)
-17. [Slash commands](#slash-commands)
-18. [Safety](#safety)
-19. [Debug traces](#debug-traces)
-20. [Schedule tasks & connectivity](#schedule-tasks--connectivity)
-21. [LLM inline tags](#llm-inline-tags)
-22. [Discord tools (for the LLM)](#discord-tools-for-the-llm)
+9. [User profiling](#user-profiling)
+10. [Reactions](#reactions)
+11. [Image understanding](#image-understanding)
+12. [GIF follow-ups](#gif-follow-ups)
+13. [Presence, quiet hours & activity decay](#presence-quiet-hours--activity-decay)
+14. [Morning greeting](#morning-greeting)
+15. [Sleep schedule](#sleep-schedule)
+16. [Quiet channel outreach](#quiet-channel-outreach)
+17. [Direct messages](#direct-messages)
+18. [Slash commands](#slash-commands)
+19. [Safety](#safety)
+20. [Debug traces](#debug-traces)
+21. [Schedule tasks & connectivity](#schedule-tasks--connectivity)
+22. [LLM inline tags](#llm-inline-tags)
+23. [Discord tools (for the LLM)](#discord-tools-for-the-llm)
 
 ---
 
@@ -153,6 +154,12 @@ Core personality and reply behavior.
 | **Memory Token Budget** | Max tokens of *older* relevant messages not already in recent chat (default 300). |
 | **Memory Match Threshold** | Semantic match strictness 0.0–1.0 (default 0.35). |
 
+**User profiling** toggles live in the same **Memory** tab (below channel memory). See [User profiling](#user-profiling) for behavior and the **Profiles** tab for inspection.
+
+### Profiles (inspection tab)
+
+Read-only dashboard (not configuration): list profiles, filter by account/guild/username, **Reset** a user, or **Run Distill Now** to queue background extraction. One profile per Discord user **across all servers** for a bot account.
+
 ### Presence
 
 See [Presence, quiet hours & activity decay](#presence-quiet-hours--activity-decay), [Morning greeting](#morning-greeting), [Sleep schedule](#sleep-schedule), [Quiet channel outreach](#quiet-channel-outreach), [Direct messages](#direct-messages), and [Safety](#safety).
@@ -264,6 +271,86 @@ All memory is **self-contained** in this plugin — no external required.
 **Injection flow:** At batch time, recent lines + semantically matched older lines are prepended to the LLM prompt automatically. The model does not need to call tools for recall.
 
 **Bot identity:** Reply prompts include a hint that lines from the bot's display name are the bot's own prior messages (first person, not third).
+
+---
+
+## User profiling
+
+Optional **per-user relationship memory** (v1.5+) — separate from channel memory. Channel memory answers *what was said here*; profiling answers *who is this person to the bot, and how should it act toward them*.
+
+**Off by default.** Enable under **Memory → User Profiling**.
+
+**Storage:** same SQLite file as channel memory (`user/plugin_data/leona_discord/discord_memory.sqlite`) — tables `user_profiles`, `profile_facts`, `profile_buffers`, etc.
+
+### Two layers
+
+| Layer | What it stores | Example |
+|-------|----------------|---------|
+| **User facts** | Preferences and stable notes about them | "Into D&D", "prefers short replies" |
+| **Relationship disposition** | How the bot leans toward this person | warmth, trust, playfulness, patience, interest, familiarity (0–1 floats) |
+
+### Identity scope
+
+Profiles are **global per Discord user per bot account** — not per guild. Legacy per-guild rows are merged on startup. Display names are refreshed on each message; `author_id` is the stable key.
+
+### Settings (Memory tab)
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| **User Profiling** | Off | Master toggle |
+| **DM Only** | Off | Profile ingest/inject only in DMs |
+| **Modulate Reply Chance** | On | Scale organic reply chance by interest + familiarity |
+| **Use LLM Distillation** | On | Background fact/summary extraction |
+| **Imperfect Recall** | Off | ~5% chance to omit profile injection (more human) |
+| **Min Messages Before Extract** | 5 | Passive counters only until this threshold |
+| **Profile Token Budget** | 300 | Max size of `[People context — internal]` block |
+| **Fact Min Confidence** | 0.6 | Facts below this are not injected |
+| **Imperfect Recall Chance** | 0.05 | When imperfect recall is on |
+| **Distill Model** | — | Optional cheap/fast model for extraction |
+| **Distill Interval** | 3 min | Minimum gap between distill runs |
+| **Distill Max Tokens** | 400 | Cap on distiller LLM output |
+
+### Runtime behavior
+
+**Passive ingest (every message, no LLM):**
+
+- Message counts, reply counts, avg length, topic hints, last seen
+- Disposition nudges from outcomes (replied, react-only, ignored)
+- Interaction buffer for later distillation
+
+**Background distiller** (`profile_distill` schedule task, every minute when enabled):
+
+- Flushes buffers after **15 min idle**, **3+ bot exchanges**, explicit "remember…" phrases, or periodic enqueue
+- LLM extracts facts, disposition deltas, L1/L2 summaries
+- Light disposition decay toward resting values after a distill pass
+
+**Before each reply** (`lib/batching.py`):
+
+- `profile.recall_user_context()` injects `[People context — internal]` after channel memory
+- Tiers: familiarity line (L0), summary + disposition (L1), keyword-matched facts (L2), full L2 detail on @mention/DM (L3)
+- Optional reply-chance modulation for the trigger author
+
+**Slash commands:**
+
+| Command | Profiling effect |
+|---------|------------------|
+| `/remember [note]` | Saves pinned channel memory **and** a high-confidence profile fact for **you** |
+| `/forget-me` | Wipes your global profile + facts for this bot |
+
+`/remember @otheruser` is **not** implemented — only the caller's profile is updated.
+
+### Profiling vs channel memory
+
+| | Channel memory | User profiling |
+|--|----------------|----------------|
+| Key | Channel | Discord user (`author_id`) |
+| Recall | What was said in this room | Who they are to the bot |
+| Toggle | Memory tab | Profiling section in Memory tab |
+| Tools | Automatic injection | Automatic injection + Profiles tab |
+
+### Implementation status
+
+Phases A–C are shipped. Consolidation polish, outreach tied to familiarity, reaction/style modulation from disposition, and group "also present" hints are still open — see `user_profiling_design.md` (status appendix) and `Roadmap.md`.
 
 ---
 
@@ -471,7 +558,8 @@ Requires **Slash Commands** enabled (General tab). Synced on bot connect.
 |---------|----------|
 | `/ask <prompt>` | Emits a Discord Message event to the Schedule pipeline (needs auto-reply task). |
 | `/summarize [count]` | Summarizes last 5–50 cached channel messages via LLM. |
-| `/remember [note]` | Saves pinned memory to SQLite (empty = uses your last message). |
+| `/remember [note]` | Saves pinned memory to SQLite **and** a profile fact for you (empty = uses your last message). |
+| `/forget-me` | Erases this bot's global profile memory of you (all servers). |
 
 `/ask` and `/summarize` need a Schedule task with auto-reply enabled to post results back to the channel.
 
@@ -587,5 +675,6 @@ If a tool already sent a message for an event, the auto-reply handler skips dupl
 |------|-------|
 | `README.md` | Setup summary & file structure |
 | `CHANGELOG.md` | Version history and feature notes |
-| `upgrade.md` | Planned / design notes |
+| `user_profiling_design.md` | Profiling implementation status (appendix) |
+| `Roadmap.md` | Planned features — done vs pending |
 | `EMOJIS.md` | Unicode emoji reference for reactions |
