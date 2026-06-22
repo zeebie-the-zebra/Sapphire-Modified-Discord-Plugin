@@ -1468,6 +1468,38 @@ class TestPresenceActivities:
         assert "listening_chat" in enabled
         assert custom == []
 
+    def test_sleep_presence_skips_awake_interval(self, monkeypatch):
+        from plugins.leona_discord.lib import presence
+        from plugins.leona_discord.lib.presence import (
+            _should_skip_presence_update,
+            resolve_presence_target,
+        )
+
+        monkeypatch.setattr(
+            "plugins.leona_discord.lib.sleep_schedule.account_is_sleeping",
+            lambda account: account == "pres",
+        )
+        mode, status, activity = resolve_presence_target("pres", {"presence_cycling_enabled": True})
+        assert mode == "sleep"
+        assert status == "idle"
+        assert activity.startswith("custom:")
+
+        presence._last_presence_update["pres"] = 1e12
+        presence._last_presence_mode["pres"] = "awake"
+        assert not _should_skip_presence_update("pres", "sleep", 1e12 + 1, 600.0, force=False)
+
+        presence._last_presence_mode["pres"] = "sleep"
+        assert _should_skip_presence_update("pres", "sleep", 1e12 + 2, 600.0, force=False)
+
+    def test_awake_presence_respects_interval(self):
+        from plugins.leona_discord.lib import presence
+        from plugins.leona_discord.lib.presence import _should_skip_presence_update
+
+        presence._last_presence_update["awake"] = 1000.0
+        presence._last_presence_mode["awake"] = "awake"
+        assert _should_skip_presence_update("awake", "awake", 1200.0, 600.0, force=False)
+        assert not _should_skip_presence_update("awake", "awake", 1700.0, 600.0, force=False)
+
 
 # ── mentions ──────────────────────────────────────────────────────────────
 

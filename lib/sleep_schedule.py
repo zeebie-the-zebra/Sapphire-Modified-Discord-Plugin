@@ -155,10 +155,15 @@ def enter_sleep(account: str, channel_id: str):
         goodnight_sent=True,
     )
     logger.info(f"[LEONA-DISCORD] Sleep: {account}:{channel_id} is now asleep")
+    try:
+        from plugins.leona_discord.lib.presence import update_presence
+        update_presence(account, force=True)
+    except Exception:
+        logger.debug("[LEONA-DISCORD] Sleep presence update skipped", exc_info=True)
 
 
 def wake_channel(account: str, channel_id: str):
-    from plugins.leona_discord.lib.store import upsert_sleep_state
+    from plugins.leona_discord.lib.store import account_has_asleep_channels, upsert_sleep_state
 
     upsert_sleep_state(
         account,
@@ -170,6 +175,12 @@ def wake_channel(account: str, channel_id: str):
         forced_wake_until=0,
     )
     logger.info(f"[LEONA-DISCORD] Sleep: {account}:{channel_id} woke up")
+    if not account_has_asleep_channels(account):
+        try:
+            from plugins.leona_discord.lib.presence import update_presence
+            update_presence(account, force=True)
+        except Exception:
+            logger.debug("[LEONA-DISCORD] Wake presence update skipped", exc_info=True)
 
 
 def should_send_goodnight_now(global_s: dict, now: datetime = None) -> bool:

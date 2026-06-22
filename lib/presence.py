@@ -208,44 +208,85 @@ def pick_awake_presence(settings: dict) -> tuple[str, str | None]:
     return "online", activity_text
 
 
+SLEEP_ACTIVITY_TEXTS = (
+    "custom: sleeping",
+    "custom: dreaming",
+    "custom: catching Z's",
+    "custom: do not disturb",
+    "custom: tucked in for the night",
+)
+
+
+def pick_sleep_presence() -> tuple[str, str]:
+    """Pick idle status and a sleep-related custom activity."""
+    return "idle", random.choice(SLEEP_ACTIVITY_TEXTS)
+
+
+def resolve_presence_target(account_name: str, settings: dict) -> tuple[str, str, str | None]:
+    """Return (mode, status_str, activity_text). mode is sleep, quiet, or awake."""
+    from plugins.leona_discord.lib.sleep_schedule import account_is_sleeping
+
+    if account_is_sleeping(account_name):
+        status_str, activity_text = pick_sleep_presence()
+        return "sleep", status_str, activity_text
+    if in_quiet_hours(settings):
+        return "quiet", "idle", None
+    if settings.get("presence_cycling_enabled", True):
+        status_str, activity_text = pick_awake_presence(settings)
+        return "awake", status_str, activity_text
+    return "awake", "online", None
+
+
 # ---------------------------------------------------------------------------
 # Presence cycling — set bot status based on time of day
 # ---------------------------------------------------------------------------
 
-_last_presence_update = 0.0
+_last_presence_update: dict[str, float] = {}
+_last_presence_mode: dict[str, str] = {}
 
 
-def update_presence(account_name: str):
+def _should_skip_presence_update(
+    account_name: str,
+    mode: str,
+    now: float,
+    interval: float,
+    *,
+    force: bool,
+) -> bool:
+    """Awake statuses rotate on an interval; sleep/quiet apply once until the mode changes."""
+    if force:
+        return False
+    prev_mode = _last_presence_mode.get(account_name)
+    if mode in ("sleep", "quiet"):
+        return prev_mode == mode
+    if mode == "awake":
+        return now - _last_presence_update.get(account_name, 0.0) < interval
+    return False
+
+
+def update_presence(account_name: str, *, force: bool = False):
     """Cycle the bot's Discord status based on time of day.
 
-    Sleeping → idle + "sleeping".  Quiet hours → idle, no activity.
-    Awake + cycling enabled → random activity from settings.
+    Sleeping → idle + sleep-related custom status (set once, no rotation).
+    Quiet hours → idle, no activity.
+    Awake + cycling enabled → random activity from settings on an interval.
     Awake + cycling disabled → online, no activity.
-  """
-    global _last_presence_update
+    """
     now = time.time()
 
     from plugins.leona_discord.lib.settings import get_effective_settings
     settings = get_effective_settings()
     interval = presence_cycle_interval_seconds(settings)
-    if now - _last_presence_update < interval:
+    mode, status_str, activity_text = resolve_presence_target(account_name, settings)
+
+    if _should_skip_presence_update(account_name, mode, now, interval, force=force):
         return
-    _last_presence_update = now
 
     if not state._loop or not state._loop.is_running():
         return
 
-    quiet = in_quiet_hours(settings)
-
-    from plugins.leona_discord.lib.sleep_schedule import account_is_sleeping
-    if account_is_sleeping(account_name):
-        status_str, activity_text = "idle", "custom: sleeping"
-    elif quiet:
-        status_str, activity_text = "idle", None
-    elif settings.get("presence_cycling_enabled", True):
-        status_str, activity_text = pick_awake_presence(settings)
-    else:
-        status_str, activity_text = "online", None
+    _last_presence_update[account_name] = now
+    _last_presence_mode[account_name] = mode
 
     asyncio.run_coroutine_threadsafe(
         _set_presence(account_name, status_str, activity_text),
