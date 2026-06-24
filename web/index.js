@@ -508,6 +508,7 @@ registerPluginSettings({
                         <button type="button" class="dc-tab-btn" data-tab="reactions">Reactions &amp; Media</button>
                         <button type="button" class="dc-tab-btn" data-tab="memory">Memory</button>
                         <button type="button" class="dc-tab-btn" data-tab="profiles">Profiles</button>
+                        <button type="button" class="dc-tab-btn" data-tab="status">Status</button>
                         <button type="button" class="dc-tab-btn" data-tab="presence">Presence</button>
                         <button type="button" class="dc-tab-btn" data-tab="advanced">Advanced</button>
                         <button type="button" class="dc-tab-btn" data-tab="debug">Debug</button>
@@ -642,6 +643,8 @@ registerPluginSettings({
                         </div>
                         <div id="dc-profile-list" class="dc-card"><p class="dc-empty">Loading profiles…</p></div>
                     </div>
+
+                    <div class="dc-tab-panel" data-tab="status" id="dc-tab-status"></div>
 
                     <div class="dc-tab-panel" data-tab="presence" id="dc-tab-presence"></div>
 
@@ -1461,8 +1464,11 @@ function _initGlobalSettingsFields(container) {
     mount('#dc-tab-advanced',
         '<p class="dc-tab-intro">Inject extra text into every user message sent to the base model.</p>'
         + _appendFieldsHTML(p));
+    mount('#dc-tab-status',
+        '<p class="dc-tab-intro">Random Discord status rotation, editable preset lists, and AI-written short statuses.</p>'
+        + _statusFieldsHTML(p));
     mount('#dc-tab-presence',
-        '<p class="dc-tab-intro">Presence, DMs, scheduled greetings, outreach, and safety.</p>'
+        '<p class="dc-tab-intro">Quiet hours, DMs, sleep, scheduled greetings, outreach, and safety.</p>'
         + _personalityFieldsHTML(p));
     _wireSliders(container, p);
     _wireReactionToggle(container, p);
@@ -1473,6 +1479,7 @@ function _initGlobalSettingsFields(container) {
     _wireGreetingTargetPicker(container, p);
     _wireForcedWakeTest(container, p);
     _wirePresenceCyclingToggle(container, p);
+    _wireLlmStatusTest(container, p);
     _wireOutreachTargetPicker(container, p);
     _wireLocalScheduleHours(container, p);
     _wireProfilingToggle(container, p);
@@ -1895,6 +1902,65 @@ function _renderGifSettings(root, prefix) {
 }
 
 
+function _statusFieldsHTML(prefix) {
+    return `
+        <div class="dc-card" style="margin-top:6px">
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label style="font-weight:600">Random Discord Status</label>
+                    <div class="dc-row-help">While awake, rotate status/activity on a timer. Sleep still shows a sleep-related custom status; when off, status is cleared (online, no activity).</div>
+                </div>
+                <div class="dc-row-control">
+                    <label class="dc-toggle">
+                        <input type="checkbox" id="${prefix}-presence-cycling">
+                        <span class="dc-toggle-track"></span>
+                        <span class="dc-toggle-thumb"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="dc-row">
+                <div class="dc-row-label">
+                    <label>LLM Status Chance (%)</label>
+                    <div class="dc-row-help">Chance that an awake status refresh asks the LLM for a very short chat-relevant custom status instead of using the preset pool.</div>
+                </div>
+                <div class="dc-row-control" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <input type="number" id="${prefix}-presence-llm-chance" min="0" max="100" value="0" class="dc-input dc-input-sm" style="width:70px">
+                    <button type="button" class="dc-btn dc-btn-sm" id="${prefix}-llm-status-test">Test LLM status</button>
+                </div>
+            </div>
+            <p id="${prefix}-llm-status-test-status" class="dc-row-help" style="margin:-4px 0 8px 0"></p>
+            <div id="${prefix}-presence-cycling-options" style="display:none">
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Change Every (minutes)</label>
+                        <div class="dc-row-help">How often to pick a new activity while awake (5–180).</div>
+                    </div>
+                    <div class="dc-row-control">
+                        <input type="number" id="${prefix}-presence-interval" min="5" max="180" value="10" class="dc-input dc-input-sm" style="width:70px">
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Default Activities</label>
+                        <div class="dc-row-help">Check the statuses to include in the rotation. Loaded from <code>statuses/awake.json</code> (reload settings page after edits). Sleep-only statuses come from <code>statuses/sleep.json</code> and are used automatically while asleep — they are not listed here.</div>
+                    </div>
+                </div>
+                <div id="${prefix}-presence-presets" class="dc-presence-presets"></div>
+                <div class="dc-row">
+                    <div class="dc-row-label">
+                        <label>Custom Activities</label>
+                        <div class="dc-row-help">One per line, added on top of checked defaults. Plain text becomes a custom status (e.g. <code>enjoying alone time</code>). Typed prefixes: <code>playing:</code>, <code>listening:</code>, <code>watching:</code>, <code>competing:</code>. Use <code>-</code> for cleared.</div>
+                    </div>
+                    <div class="dc-row-control" style="flex:1;max-width:420px">
+                        <textarea id="${prefix}-presence-custom" class="dc-input" rows="3" placeholder="enjoying alone time&#10;looking forward to Friday&#10;playing: Minecraft"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+
 function _personalityFieldsHTML(prefix) {
     const providerHtml = _llmProviderOptionsHtml();
     return `
@@ -1902,7 +1968,7 @@ function _personalityFieldsHTML(prefix) {
             <div class="dc-row">
                 <div class="dc-row-label">
                     <label style="font-weight:600">Presence &amp; Access</label>
-                    <div class="dc-row-help">Quiet hours and activity decay (global schedule).</div>
+                    <div class="dc-row-help">Quiet hours, reply pacing, and global schedule behavior.</div>
                 </div>
             </div>
             <div class="dc-row">
@@ -1940,46 +2006,6 @@ function _personalityFieldsHTML(prefix) {
                     <input type="number" id="${prefix}-activity-threshold" min="2" max="100" value="10" class="dc-input dc-input-sm" style="width:60px" title="Msg threshold">
                     <span>msgs ×</span>
                     <input type="number" id="${prefix}-activity-multiplier" min="0" max="1" step="0.1" value="0.5" class="dc-input dc-input-sm" style="width:60px" title="Chance multiplier">
-                </div>
-            </div>
-            <div class="dc-row">
-                <div class="dc-row-label">
-                    <label>Random Discord Status</label>
-                    <div class="dc-row-help">While awake, rotate status/activity on a timer. Sleep still shows <em>sleeping</em>; when off, status is cleared (online, no activity).</div>
-                </div>
-                <div class="dc-row-control">
-                    <label class="dc-toggle">
-                        <input type="checkbox" id="${prefix}-presence-cycling">
-                        <span class="dc-toggle-track"></span>
-                        <span class="dc-toggle-thumb"></span>
-                    </label>
-                </div>
-            </div>
-            <div id="${prefix}-presence-cycling-options" style="display:none">
-                <div class="dc-row">
-                    <div class="dc-row-label">
-                        <label>Change Every (minutes)</label>
-                        <div class="dc-row-help">How often to pick a new activity while awake (5–180).</div>
-                    </div>
-                    <div class="dc-row-control">
-                        <input type="number" id="${prefix}-presence-interval" min="5" max="180" value="10" class="dc-input dc-input-sm" style="width:70px">
-                    </div>
-                </div>
-                <div class="dc-row">
-                    <div class="dc-row-label">
-                        <label>Default Activities</label>
-                        <div class="dc-row-help">Check the statuses to include in the rotation.</div>
-                    </div>
-                </div>
-                <div id="${prefix}-presence-presets" class="dc-presence-presets"></div>
-                <div class="dc-row">
-                    <div class="dc-row-label">
-                        <label>Custom Activities</label>
-                        <div class="dc-row-help">One per line, added on top of checked defaults. Plain text becomes a custom status (e.g. <code>enjoying alone time</code>). Typed prefixes: <code>playing:</code>, <code>listening:</code>, <code>watching:</code>, <code>competing:</code>. Use <code>-</code> for cleared.</div>
-                    </div>
-                    <div class="dc-row-control" style="flex:1;max-width:420px">
-                        <textarea id="${prefix}-presence-custom" class="dc-input" rows="3" placeholder="enjoying alone time&#10;looking forward to Friday&#10;playing: Minecraft"></textarea>
-                    </div>
                 </div>
             </div>
         </div>
@@ -2672,13 +2698,61 @@ async function _sendTestForcedWake(root, prefix) {
 }
 
 
-function _wirePresenceCyclingToggle(root, prefix) {
+function _syncPresenceCyclingToggle(root, prefix) {
     const enabled = root.querySelector(`#${prefix}-presence-cycling`);
     const opts = root.querySelector(`#${prefix}-presence-cycling-options`);
     if (!enabled || !opts) return;
-    const sync = () => { opts.style.display = enabled.checked ? 'block' : 'none'; };
-    enabled.addEventListener('change', sync);
-    sync();
+    opts.style.display = enabled.checked ? 'block' : 'none';
+}
+
+
+function _wirePresenceCyclingToggle(root, prefix) {
+    const enabled = root.querySelector(`#${prefix}-presence-cycling`);
+    if (!enabled || enabled.dataset.wired) return;
+    enabled.dataset.wired = '1';
+    enabled.addEventListener('change', () => _syncPresenceCyclingToggle(root, prefix));
+    _syncPresenceCyclingToggle(root, prefix);
+}
+
+
+async function _sendTestLlmStatus(root, prefix) {
+    const btn = root.querySelector(`#${prefix}-llm-status-test`);
+    const status = root.querySelector(`#${prefix}-llm-status-test-status`);
+    if (!btn) return;
+
+    btn.disabled = true;
+    if (status) {
+        status.textContent = 'Generating…';
+        status.style.color = '';
+    }
+
+    try {
+        const res = await fetch('/api/plugin/leona_discord/status/llm/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF() },
+            body: JSON.stringify({ apply: true }),
+        });
+        const data = await res.json();
+        if (status) {
+            status.textContent = data.message || data.error || (data.success ? 'Done' : 'Failed');
+            status.style.color = data.success ? 'var(--success, #43b581)' : 'var(--error, #f04747)';
+        }
+    } catch (e) {
+        if (status) {
+            status.textContent = e.message || 'Request failed';
+            status.style.color = 'var(--error, #f04747)';
+        }
+    }
+    btn.disabled = false;
+}
+
+
+function _wireLlmStatusTest(root, prefix) {
+    const testBtn = root.querySelector(`#${prefix}-llm-status-test`);
+    if (testBtn && !testBtn.dataset.wired) {
+        testBtn.dataset.wired = '1';
+        testBtn.addEventListener('click', () => _sendTestLlmStatus(root, prefix));
+    }
 }
 
 
@@ -2951,8 +3025,14 @@ const _PRESENCE_CATEGORY_LABELS = {
     watching: 'Watching',
     playing: 'Playing',
     competing: 'Competing',
+    studying: 'Studying',
+    working: 'Working',
+    eating: 'Eating',
 };
-const _PRESENCE_CATEGORY_ORDER = ['none', 'custom', 'listening', 'watching', 'playing', 'competing'];
+const _PRESENCE_CATEGORY_ORDER = [
+    'none', 'custom', 'listening', 'watching', 'playing', 'competing',
+    'studying', 'working', 'eating',
+];
 
 
 function _renderPresencePresetCheckboxes(root, prefix, catalog) {
@@ -3034,7 +3114,9 @@ function _populatePersonalityFields(root, prefix, data, dmData) {
     v(`${prefix}-activity-multiplier`, data.activity_decay_multiplier ?? 0.5);
     c(`${prefix}-presence-cycling`, data.presence_cycling_enabled !== false);
     v(`${prefix}-presence-interval`, data.presence_cycle_interval_minutes ?? 10);
+    v(`${prefix}-presence-llm-chance`, data.presence_llm_status_chance ?? 0);
     _populatePresencePresets(root, prefix, data);
+    _syncPresenceCyclingToggle(root, prefix);
     c(`${prefix}-sleep-enabled`, data.sleep_schedule_enabled);
     v(`${prefix}-sleep-hour`, _utcHourToLocal(data.sleep_utc_hour ?? 22));
     v(`${prefix}-sleep-buffer-max`, data.sleep_buffered_reply_max ?? 3);
@@ -3102,6 +3184,7 @@ function _readPersonalityFields(root, prefix) {
         activity_decay_multiplier: parseFloat(v(`${prefix}-activity-multiplier`) || '0.5'),
         presence_cycling_enabled: b(`${prefix}-presence-cycling`),
         presence_cycle_interval_minutes: i(`${prefix}-presence-interval`),
+        presence_llm_status_chance: i(`${prefix}-presence-llm-chance`),
         presence_activity_presets: _readPresencePresets(root, prefix),
         presence_activities_custom: _readPresenceCustom(root, prefix),
         sleep_schedule_enabled: b(`${prefix}-sleep-enabled`),
@@ -3476,6 +3559,10 @@ async function _saveGlobalSettings(container) {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         _populateReplyContextFields(container, data);
+        if (data.global) {
+            _populatePersonalityFields(container, 'dc-g', data.global, data.dm || {});
+            _syncPresenceCyclingToggle(container, 'dc-g');
+        }
         if (status) {
             const warn = (data.warnings || []).join(' ');
             status.textContent = warn ? `✓ Saved — ${warn}` : '✓ Saved';
@@ -3545,6 +3632,7 @@ async function _saveAllSettings(container) {
             if ((data.warnings || []).length) {
                 errors.push(...data.warnings);
             }
+            _populatePersonalityFields(container, 'dc-g', data.global || {}, data.dm || {});
             saved.push('global');
         } catch (e) {
             errors.push(`global: ${e.message}`);

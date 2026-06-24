@@ -1,16 +1,20 @@
 """Quiet hours, scheduled presence, and ambient life helpers."""
 
 import asyncio
+import json
 import logging
 import random
+import re
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from plugins.leona_discord.lib import state
+from plugins.leona_discord.lib.think_tags import strip_think_tags
 
 logger = logging.getLogger(__name__)
 
-PRESENCE_ACTIVITY_PRESETS = [
+_DEFAULT_PRESENCE_ACTIVITY_PRESETS = [
     {"id": "clear", "category": "none", "label": "No activity (cleared)", "value": ""},
     {"id": "listening_chat", "category": "listening", "label": "Listening to chat", "value": "listening: chat"},
     {"id": "listening_lofi", "category": "listening", "label": "Listening to lo-fi", "value": "listening: lo-fi beats"},
@@ -49,8 +53,120 @@ DEFAULT_ENABLED_PRESET_IDS = [
     "daydreaming",
 ]
 
+_DEFAULT_SLEEP_ACTIVITY_TEXTS = (
+    "custom: sleeping",
+    "custom: dreaming",
+    "custom: catching Z's",
+    "custom: do not disturb",
+    "custom: tucked in for the night",
+)
+
+_VALID_PRESET_CATEGORIES = {
+    "none", "custom", "playing", "listening", "watching", "competing",
+    # Grouped in awake.json for UI; Discord renders these as custom statuses.
+    "studying", "working", "eating",
+}
+
+
+def _status_config_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "statuses"
+
+
+def _load_json_file(path: Path):
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _normalize_presence_preset_entry(item: object) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    preset_id = str(item.get("id") or "").strip()
+    category = str(item.get("category") or "").strip().lower()
+    label = str(item.get("label") or "").strip()
+    value = str(item.get("value") or "")
+    if not preset_id or category not in _VALID_PRESET_CATEGORIES or not label:
+        return None
+    return {
+        "id": preset_id[:50],
+        "category": category,
+        "label": label[:128],
+        "value": value[:128],
+    }
+
+
+def _load_presence_activity_presets() -> list[dict]:
+    path = _status_config_dir() / "awake.json"
+    try:
+        data = _load_json_file(path)
+        if not isinstance(data, list):
+            raise ValueError("awake.json must contain a list")
+        presets = []
+        seen_ids = set()
+        for index, item in enumerate(data):
+            normalized = _normalize_presence_preset_entry(item)
+            if not normalized:
+                logger.warning(
+                    f"[DISCORD] Skipping invalid awake.json entry #{index + 1}: {item!r}"
+                )
+                continue
+            if normalized["id"] in seen_ids:
+                continue
+            presets.append(normalized)
+            seen_ids.add(normalized["id"])
+        if not presets:
+            raise ValueError("awake.json must contain at least one preset")
+        return presets
+    except FileNotFoundError:
+        return list(_DEFAULT_PRESENCE_ACTIVITY_PRESETS)
+    except Exception as e:
+        logger.warning(f"[DISCORD] Failed to load awake statuses from {path}: {e}")
+        return list(_DEFAULT_PRESENCE_ACTIVITY_PRESETS)
+
+
+def _load_sleep_activity_texts() -> tuple[str, ...]:
+    path = _status_config_dir() / "sleep.json"
+    try:
+        data = _load_json_file(path)
+        if not isinstance(data, list):
+            raise ValueError("sleep.json must contain a list")
+        values = []
+        for index, item in enumerate(data):
+            if not isinstance(item, str):
+                logger.warning(
+                    f"[DISCORD] Skipping invalid sleep.json entry #{index + 1}: {item!r}"
+                )
+                continue
+            text = item.strip()[:128]
+            if not text:
+                logger.warning(
+                    f"[DISCORD] Skipping empty sleep.json entry #{index + 1}"
+                )
+                continue
+            values.append(text)
+        if not values:
+            raise ValueError("sleep.json must contain at least one status")
+        return tuple(values)
+    except FileNotFoundError:
+        return _DEFAULT_SLEEP_ACTIVITY_TEXTS
+    except Exception as e:
+        logger.warning(f"[DISCORD] Failed to load sleep statuses from {path}: {e}")
+        return _DEFAULT_SLEEP_ACTIVITY_TEXTS
+
+
+PRESENCE_ACTIVITY_PRESETS = _load_presence_activity_presets()
+SLEEP_ACTIVITY_TEXTS = _load_sleep_activity_texts()
+
 _PRESET_BY_ID = {p["id"]: p for p in PRESENCE_ACTIVITY_PRESETS}
 _PRESET_BY_VALUE = {p["value"]: p["id"] for p in PRESENCE_ACTIVITY_PRESETS}
+
+
+def _reload_presence_status_data() -> None:
+    """Reload awake/sleep JSON from disk (picks up edits without a full restart)."""
+    global PRESENCE_ACTIVITY_PRESETS, SLEEP_ACTIVITY_TEXTS, _PRESET_BY_ID, _PRESET_BY_VALUE
+    PRESENCE_ACTIVITY_PRESETS = _load_presence_activity_presets()
+    SLEEP_ACTIVITY_TEXTS = _load_sleep_activity_texts()
+    _PRESET_BY_ID = {p["id"]: p for p in PRESENCE_ACTIVITY_PRESETS}
+    _PRESET_BY_VALUE = {p["value"]: p["id"] for p in PRESENCE_ACTIVITY_PRESETS}
 
 _LEGACY_VALUE_ALIASES = {
     "listening to chat": "listening_chat",
@@ -73,12 +189,94 @@ _ACTIVITY_PREFIXES = {
     "competing": "competing",
 }
 
+_LLM_STATUS_MAX_CHARS = 60
+_THINKING_TAIL_MARKERS = (
+    "</think>",
+    "</thinking>",
+    "</seed:think>",
+    "</seed:cot_budget_reflect>",
+)
+_PRESENCE_META_FRAGMENTS = (
+    "user wants",
+    "discord custom",
+    "2-6 word",
+    "inspired by",
+    "the chat",
+    "reply with",
+    "no quotes",
+    "custom status",
+    "the model",
+    "i should",
+    "i need to",
+    "let me",
+)
+
+
+def _extract_presence_after_thinking(text: str) -> str:
+    """Recover visible text after a closed thinking block when strip removed everything."""
+    lowered = text.lower()
+    best = ""
+    for marker in _THINKING_TAIL_MARKERS:
+        idx = lowered.rfind(marker.lower())
+        if idx >= 0:
+            tail = text[idx + len(marker):].strip()
+            if tail and (not best or len(tail) < len(best)):
+                best = tail
+    return best
+
+
+def _looks_like_presence_meta(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(fragment in lower for fragment in _PRESENCE_META_FRAGMENTS)
+
+
+def _salvage_presence_from_thinking(raw: str) -> str:
+    """Best-effort extraction when the model only returned reasoning text."""
+    if not raw or not raw.strip():
+        return ""
+
+    for match in re.finditer(r'"([^"]{2,60})"', raw):
+        candidate = sanitize_generated_presence_status(match.group(1))
+        if candidate and not _looks_like_presence_meta(candidate):
+            return candidate
+
+    for match in re.finditer(r"'([^']{2,60})'", raw):
+        candidate = sanitize_generated_presence_status(match.group(1))
+        if candidate and not _looks_like_presence_meta(candidate):
+            return candidate
+
+    body = re.sub(r"(?is)<think>\s*", "", raw, count=1)
+    body = re.sub(r"(?is)<thinking>\s*", "", body, count=1)
+    for part in re.split(r"[\n.!?]+", body):
+        candidate = sanitize_generated_presence_status(part)
+        if not candidate or _looks_like_presence_meta(candidate):
+            continue
+        words = candidate.split()
+        if 2 <= len(words) <= 8:
+            return candidate
+    return ""
+
+
+def _presence_llm_gen_params(gen_params: dict, *, max_tokens: int) -> dict:
+    params = dict(gen_params)
+    params["max_tokens"] = max_tokens
+    params["disable_thinking"] = True
+    extra_body = dict(params.get("extra_body") or {})
+    chat_template_kwargs = dict(extra_body.get("chat_template_kwargs") or {})
+    chat_template_kwargs["enable_thinking"] = False
+    extra_body["chat_template_kwargs"] = chat_template_kwargs
+    if "minimax" in str(params.get("model") or "").lower():
+        extra_body.setdefault("thinking", {"type": "disabled"})
+    params["extra_body"] = extra_body
+    return params
+
 
 def valid_preset_ids() -> set[str]:
     return set(_PRESET_BY_ID.keys())
 
 
 def presence_preset_catalog() -> list[dict]:
+    _reload_presence_status_data()
     return list(PRESENCE_ACTIVITY_PRESETS)
 
 
@@ -135,7 +333,7 @@ def _normalize_enabled_preset_ids(value) -> list[str]:
     valid = valid_preset_ids()
     if not isinstance(value, list):
         return []
-    return [str(item).strip() for item in value if str(item).strip() in valid][:50]
+    return [str(item).strip() for item in value if str(item).strip() in valid]
 
 
 def resolve_presence_selection(settings: dict) -> tuple[list[str], list[str]]:
@@ -199,8 +397,128 @@ def parse_activity_entry(text: str):
     return "custom", text[:128]
 
 
-def pick_awake_presence(settings: dict) -> tuple[str, str | None]:
+def sanitize_generated_presence_status(text: str) -> str:
+    raw = text or ""
+    text = strip_think_tags(raw)
+    if not text.strip():
+        text = _extract_presence_after_thinking(raw)
+    text = text.replace("\r", "\n")
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            text = stripped
+            break
+    else:
+        return ""
+
+    if text.startswith('"') and text.endswith('"') and len(text) >= 2:
+        text = text[1:-1].strip()
+    lower = text.lower()
+    for prefix in ("status:", "custom:", "activity:"):
+        if lower.startswith(prefix):
+            text = text[len(prefix):].strip()
+            lower = text.lower()
+    text = " ".join(text.split())
+    if len(text) > _LLM_STATUS_MAX_CHARS:
+        text = text[: _LLM_STATUS_MAX_CHARS - 1].rstrip() + "…"
+    return text[:128]
+
+
+def _parse_presence_llm_raw(llm_response) -> str:
+    if llm_response and getattr(llm_response, "content", None):
+        return llm_response.content or ""
+    return ""
+
+
+def generate_llm_presence_status(account_name: str, settings: dict) -> str:
+    try:
+        from core.api_fastapi import get_system
+        from core.chat.llm_providers import get_generation_params
+        from plugins.leona_discord.lib.proactive_llm import _providers_config
+        from plugins.leona_discord.lib.history import format_proactive_history, get_history_snapshot
+        from plugins.leona_discord.lib.store import get_most_recent_channel_for_account
+    except Exception as e:
+        logger.debug(f"[DISCORD] Presence LLM unavailable for {account_name}: {e}")
+        return ""
+
+    guild_id, channel_id = get_most_recent_channel_for_account(account_name)
+    if not channel_id:
+        return ""
+
+    system = get_system()
+    if not system or not getattr(system, "llm_chat", None):
+        return ""
+
+    recent = format_proactive_history(
+        get_history_snapshot(state.channel_key(account_name, channel_id)),
+        guild_id or "",
+        account_name,
+    )
+    if not recent:
+        return ""
+
+    prompt = (
+        "Write one 2-6 word Discord custom status inspired by this chat.\n"
+        "Output only the status phrase.\n\n"
+        "Chat:\n" + "\n".join(recent[-6:])
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": "You write ultra-short Discord custom statuses. Never explain or reason aloud.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        llm = system.llm_chat
+        provider_key, provider, model_override = llm._select_provider()
+        effective_model = model_override or provider.model
+        base_gen = get_generation_params(provider_key, effective_model, _providers_config())
+        if model_override:
+            base_gen["model"] = model_override
+
+        last_raw = ""
+        for max_tokens in (64, 512):
+            gen_params = _presence_llm_gen_params(base_gen, max_tokens=max_tokens)
+            llm_response = llm.tool_engine.call_llm_with_metrics(
+                provider,
+                messages,
+                gen_params,
+                tools=None,
+            )
+            raw = _parse_presence_llm_raw(llm_response)
+            last_raw = raw or last_raw
+            cleaned = sanitize_generated_presence_status(raw)
+            if cleaned:
+                return cleaned
+            salvaged = _salvage_presence_from_thinking(raw)
+            if salvaged:
+                return salvaged
+
+        if last_raw and last_raw.strip():
+            preview = last_raw.strip().replace("\n", " ")[:120]
+            logger.warning(
+                f"[DISCORD] Presence LLM for {account_name} produced unusable output "
+                f"({len(last_raw)} chars, finish may be length or thinking-only): {preview!r}"
+            )
+        return ""
+    except Exception as e:
+        logger.warning(f"[DISCORD] Presence LLM failed for {account_name}: {e}")
+        return ""
+
+
+def pick_awake_presence(settings: dict, *, account_name: str = "") -> tuple[str, str | None]:
     """Pick status and activity text while the bot is awake."""
+    try:
+        llm_chance = max(0, min(100, int(settings.get("presence_llm_status_chance", 0))))
+    except (TypeError, ValueError):
+        llm_chance = 0
+    if account_name and llm_chance > 0 and random.randint(1, 100) <= llm_chance:
+        llm_status = generate_llm_presence_status(account_name, settings)
+        if llm_status:
+            return "online", llm_status
+
     activities = presence_activity_pool(settings)
     activity_text = random.choice(activities) if activities else ""
     if not activity_text:
@@ -208,17 +526,9 @@ def pick_awake_presence(settings: dict) -> tuple[str, str | None]:
     return "online", activity_text
 
 
-SLEEP_ACTIVITY_TEXTS = (
-    "custom: sleeping",
-    "custom: dreaming",
-    "custom: catching Z's",
-    "custom: do not disturb",
-    "custom: tucked in for the night",
-)
-
-
 def pick_sleep_presence() -> tuple[str, str]:
     """Pick idle status and a sleep-related custom activity."""
+    _reload_presence_status_data()
     return "idle", random.choice(SLEEP_ACTIVITY_TEXTS)
 
 
@@ -232,7 +542,7 @@ def resolve_presence_target(account_name: str, settings: dict) -> tuple[str, str
     if in_quiet_hours(settings):
         return "quiet", "idle", None
     if settings.get("presence_cycling_enabled", True):
-        status_str, activity_text = pick_awake_presence(settings)
+        status_str, activity_text = pick_awake_presence(settings, account_name=account_name)
         return "awake", status_str, activity_text
     return "awake", "online", None
 
@@ -262,6 +572,24 @@ def _should_skip_presence_update(
     if mode == "awake":
         return now - _last_presence_update.get(account_name, 0.0) < interval
     return False
+
+
+def apply_presence_activity(
+    account_name: str,
+    activity_text: str | None,
+    *,
+    status_str: str = "online",
+) -> bool:
+    """Apply a specific Discord presence immediately."""
+    if not state._loop or not state._loop.is_running():
+        return False
+    _last_presence_update[account_name] = time.time()
+    _last_presence_mode[account_name] = "awake"
+    asyncio.run_coroutine_threadsafe(
+        _set_presence(account_name, status_str, activity_text),
+        state._loop,
+    )
+    return True
 
 
 def update_presence(account_name: str, *, force: bool = False):

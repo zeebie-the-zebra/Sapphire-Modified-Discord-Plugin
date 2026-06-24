@@ -234,6 +234,34 @@ def plan_explicit_edit(sent_text: str, edited_text: str) -> Optional[Tuple[float
     return delay, sent, edited
 
 
+def resolve_edit_chunk_index(chunks: list[str], raw_text: str) -> int:
+    """Pick which outbound chunk contained the ``[edit:…]`` tag."""
+    if not chunks:
+        return 0
+    if len(chunks) == 1:
+        return 0
+
+    lower = (raw_text or "").lower()
+    pos = lower.rfind("[edit:")
+    if pos < 0:
+        return len(chunks) - 1
+
+    before = (raw_text or "")[:pos].rstrip()
+    for i in range(len(chunks) - 1, -1, -1):
+        candidate = chunks[i].strip()
+        if candidate and before.endswith(candidate):
+            return i
+
+    prefix_parts = [p.strip() for p in before.split("\n\n") if p.strip()]
+    if prefix_parts:
+        last_part = prefix_parts[-1]
+        for i, chunk in enumerate(chunks):
+            if chunk.strip() == last_part:
+                return i
+
+    return len(chunks) - 1
+
+
 def plan_post_send_edit(text: str) -> Optional[Tuple[float, str, str]]:
     """Plan an occasional typo-fix or trailing-thought edit.
 

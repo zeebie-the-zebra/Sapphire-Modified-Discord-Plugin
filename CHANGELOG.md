@@ -6,7 +6,70 @@ The stock `plugins/discord` plugin was **not modified** — Leona is a separate,
 
 ## Unreleased
 
-*Nothing yet.*
+_(nothing yet)_
+
+---
+
+## 1.5.7 — Status tab, proactive LLM reliability, edit fixes
+
+### Settings UI
+
+- **Status tab** — random Discord status rotation, preset checkboxes, custom activity lines, and **LLM Status Chance** moved out of the old combined Presence layout into their own **Status** tab
+- **Presence tab** — now focuses on quiet hours, DMs, sleep schedule, greetings, outreach, and safety
+- **Random Discord Status options** — cycling sub-panel syncs correctly on settings load (no longer hidden until the toggle is toggled)
+- **Preset save** — removed the 50-preset cap; saves validate against the full catalog from `statuses/awake.json`
+
+### Presence & status data
+
+- **JSON-backed defaults** — awake preset catalog loads from `statuses/awake.json`; sleep-only custom statuses load from `statuses/sleep.json`
+- **Editable without code changes** — expand or tweak built-in examples in JSON instead of editing `lib/presence.py`
+- **Resilient JSON load** — invalid `awake.json` entries are skipped with a warning instead of rejecting the whole file; catalog reloads on settings read so new presets appear without a restart
+- **New preset categories** — `studying`, `working`, and `eating` (grouped in the UI; rendered as Discord custom statuses)
+- **LLM-written statuses** — `presence_llm_status_chance` (0–100%) optionally replaces a preset pick with a short chat-relevant custom status; **Test LLM status** button in the Status tab
+- **Sleep presence fix** — asleep/quiet presence applies before the awake rotation throttle; `enter_sleep()` / `wake_channel()` force an immediate presence update so goodnight no longer leaves an awake status showing
+
+### Proactive messages (greeting, goodnight, outreach)
+
+- **Shared LLM path** — new `lib/proactive_llm.py` used by `greeting_llm.py`, `goodnight_llm.py`, and `outreach_llm.py`
+- **Thinking models** — sets `disable_thinking` (incl. MiniMax) so token budget goes to the posted message, not hidden reasoning
+- **Retry & salvage** — retries with a higher token cap (up to 512) when the first pass is empty; salvages quoted text from thinking blocks when possible
+- **Fixes fallback-only homelab greetings** — first target in the greeting loop could hit `finish=length` with thinking-only output stripped to empty; Sapphire’s second target often succeeded — both channels should now get LLM-written text when `*_use_llm` is on
+
+### Reply delivery
+
+- **`[edit:]` multiline fix** — `resolve_edit_chunk_index()` in `lib/reply_style.py` edits the paragraph that contains the tag, not always the last chunk (fixes duplicate-first-line edits in Discord)
+- **Nested inline tags** — `[react:…]` stripped from the edit target text in `lib/inline_tags.py`
+
+### API
+
+- `POST /api/plugin/leona_discord/status/llm/test` — generate (and optionally apply) a one-off LLM custom status for a connected account
+
+### Settings keys
+
+
+| Key | Default | Purpose |
+| --- | ------- | ------- |
+| `presence_llm_status_chance` | 0 | % chance an awake refresh uses LLM status instead of the preset pool |
+
+### New / updated modules
+
+
+| Module | Purpose |
+| ------ | ------- |
+| `lib/proactive_llm.py` | Shared disable-thinking LLM calls for greeting, goodnight, outreach |
+| `lib/greeting_llm.py` | Uses `proactive_llm` |
+| `lib/goodnight_llm.py` | Uses `proactive_llm` |
+| `lib/outreach_llm.py` | Uses `proactive_llm` |
+| `lib/reply_style.py` | `resolve_edit_chunk_index()` for multiline `[edit:]` |
+| `statuses/awake.json` | Editable awake preset catalog |
+| `statuses/sleep.json` | Editable sleep custom-status strings |
+| `web/index.js` | Status tab, LLM status test, preset category labels |
+
+### Tests
+
+- Proactive LLM: `disable_thinking`, salvage, retry-on-empty
+- Presence: JSON load, invalid-entry skip, LLM status params, sleep presence skip logic
+- Inline tags: multiline `[edit:]` chunk targeting
 
 ---
 
@@ -576,6 +639,7 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 | 1.5.3   | —       | Auto typos (711-word list), inline tag hardening, auto-reply delivery guard, debug delivery warnings                           |
 | 1.5.4   | —       | `pip_dependencies`, dual placement (`_compat.py`, `DUAL_PLACEMENT.md`)                                                         |
 | 1.5.5   | —       | Random Discord status cycling, preset checkboxes, custom status phrases, sleep/quiet-hours presence rules                      |
+| 1.5.7   | —       | Status tab, JSON status catalogs, LLM status chance, proactive LLM reliability (greeting/goodnight/outreach), multiline `[edit:]` fix, sleep presence fix |
 
 
 ---
@@ -587,8 +651,8 @@ Public API re-exported from `daemon.py` for backward compatibility (`get_client`
 - **Slash commands**: enable `applications.commands` OAuth scope when inviting the bot
 - **Memory data**: `user/plugin_data/leona_discord/discord_memory.sqlite`
 - **Schedule tasks**: `/ask`, `/summarize`, and normal channel replies require an active `discord_message` daemon task for the bot account
-- **Morning greeting, quiet outreach & sleep schedule**: require bot online (**Always Online** or active Schedule task) plus Sapphire continuity scheduler; hour fields in the UI are local time (saved as UTC)
-- **Random Discord status**: requires bot online (**Always Online** or active Schedule task); daemon loop applies presence changes on the configured interval
+- **Morning greeting, quiet outreach & sleep schedule**: require bot online (**Always Online** or active Schedule task) plus Sapphire continuity scheduler; hour fields in the UI are local time (saved as UTC). LLM-written text uses `lib/proactive_llm.py` (disable-thinking + retry) — if a channel still gets fallback text, check logs for `Greeting LLM unusable output` or set dedicated `*_model_provider` / `*_model_name` fields
+- **Random Discord status**: requires bot online (**Always Online** or active Schedule task); daemon loop applies presence changes on the configured interval; optional LLM status picks use the same disable-thinking path as proactive messages
 - **GIF replies**: Klipy API key (recommended) or Giphy key; optional fast/cheap LLM for query selection; `requests` used for provider HTTP calls
 - **Tenor**: legacy GIF provider only — migrate to Klipy or Giphy before **June 30, 2026**
 

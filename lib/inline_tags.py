@@ -103,7 +103,11 @@ class ParsedInlineTags:
 
     @property
     def inline_edit_text(self) -> str:
-        return self.edit_tags[-1].strip() if self.edit_tags else ""
+        raw = self.edit_tags[-1].strip() if self.edit_tags else ""
+        if not raw:
+            return ""
+        nested = parse_inline_tags(raw, strip_think=False)
+        return nested.clean.strip() or raw
 
     def has_inline_tags(self) -> bool:
         return bool(self.react_tags or self.gif_tags or self.edit_tags)

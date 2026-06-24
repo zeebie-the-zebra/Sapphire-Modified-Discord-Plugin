@@ -40,6 +40,7 @@ _INT_FIELDS = {
     "quiet_hours_start": (0, 23),
     "quiet_hours_end": (0, 23),
     "presence_cycle_interval_minutes": (5, 180),
+    "presence_llm_status_chance": (0, 100),
     "activity_decay_threshold": (2, 100),
     "engagement_weight": (1, 100),
     "rate_limit_seconds": (0, 120),
@@ -200,7 +201,7 @@ def _apply_message_settings(body: dict, target: dict):
         if isinstance(raw_ids, list):
             target["presence_activity_presets"] = [
                 str(item).strip() for item in raw_ids if str(item).strip() in valid
-            ][:50]
+            ]
     if "presence_activities_custom" in body:
         from plugins.leona_discord.lib.presence import parse_presence_activities
         target["presence_activities_custom"] = parse_presence_activities(body["presence_activities_custom"])
@@ -558,6 +559,74 @@ async def test_forced_wake(**kwargs):
 
     sent_ok = summary.startswith("Queued ") and "Queued forced-wake test reply for 0" not in summary
     return {"success": sent_ok, "message": summary}
+
+
+async def test_llm_presence_status(**kwargs):
+    """POST /api/plugin/leona_discord/status/llm/test — generate and optionally apply an LLM status."""
+    body = kwargs.get("body") or {}
+    account = str(body.get("account") or "").strip()
+    apply = body.get("apply", True)
+    if isinstance(apply, str):
+        apply = apply.lower() not in ("0", "false", "no")
+    else:
+        apply = bool(apply)
+
+    try:
+        from plugins.leona_discord.daemon import list_connected
+        from plugins.leona_discord.lib.presence import (
+            apply_presence_activity,
+            generate_llm_presence_status,
+        )
+        from plugins.leona_discord.lib.settings import SETTING_DEFAULTS, get_plugin_settings
+        from plugins.leona_discord.lib.store import get_most_recent_channel_for_account
+
+        connected = list_connected()
+        if not connected:
+            return {
+                "success": False,
+                "error": "No connected bot accounts — enable Always Online or connect a bot",
+            }
+        if not account:
+            account = connected[0]
+        elif account not in connected:
+            return {"success": False, "error": f"Account '{account}' is not connected"}
+
+        raw = get_plugin_settings()
+        settings = {**SETTING_DEFAULTS, **(raw.get("global") or {})}
+        guild_id, channel_id = get_most_recent_channel_for_account(account)
+        if not channel_id:
+            return {
+                "success": False,
+                "error": "No recent channel history for this bot — send a few messages first",
+            }
+
+        text = generate_llm_presence_status(account, settings)
+        if not text:
+            return {
+                "success": False,
+                "error": (
+                    "LLM returned empty status after sanitization — "
+                    "reasoning models may need thinking disabled for short outputs"
+                ),
+            }
+
+        applied = apply_presence_activity(account, text) if apply else False
+        channel_note = f" (from recent activity in channel {channel_id})" if channel_id else ""
+        message = f'Generated for {account}: "{text}"{channel_note}'
+        if apply:
+            message += " — applied to Discord" if applied else " — could not apply (daemon loop not running)"
+        return {
+            "success": True,
+            "account": account,
+            "guild_id": guild_id or "",
+            "channel_id": channel_id or "",
+            "status_text": text,
+            "applied": applied,
+            "message": message,
+        }
+    except Exception as e:
+        logger.error(f"[LEONA-DISCORD] LLM status test failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 async def list_greeting_targets(**kwargs):

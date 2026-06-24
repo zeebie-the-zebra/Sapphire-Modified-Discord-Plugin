@@ -1,10 +1,10 @@
 # Leona Discord Plugin
 
-Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.5**
+Personality-oriented Discord integration for Sapphire — long-running bot daemon, human-like reply timing, self-contained memory, and optional per-user relationship profiling. **Current version: 1.5.7**
 
 This is a fork of the stock `plugins/discord` plugin. The stock plugin is **not modified**. **Do not enable both** — they register the same Discord tool names and will conflict.
 
-For detailed settings documentation, see [`configuration_guide.md`](configuration_guide.md). For profiling status, see [`user_profiling_design.md`](user_profiling_design.md) or the [User profiling](configuration_guide.md#user-profiling) section in the configuration guide. For install paths (`plugins/` vs `user/plugins/`), see [`DUAL_PLACEMENT.md`](DUAL_PLACEMENT.md). For release history, see [`CHANGELOG.md`](CHANGELOG.md).
+For detailed settings documentation, see [`configuration_guide.md`](configuration_guide.md). For profiling status, see [`user_profiling_design.md`](user_profiling_design.md) or the [User profiling](configuration_guide.md#user-profiling) section in the configuration guide. For release history, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 
@@ -68,7 +68,7 @@ DistilBERT (`cardiffnlp/twitter-roberta-base-sentiment-latest`) handles slang, s
 
 ### Message edits & auto typos
 
-- **LLM `[edit:…]` tags** — model sends a draft, then the reply is edited after a short pause (works on the last line of multiline replies; malformed `[edit:…` without `]` is still honoured)
+- **LLM `[edit:…]` tags** — model sends a draft, then the reply is edited after a short pause; on multiline replies the chunk that contains the tag is edited (`resolve_edit_chunk_index` in `lib/reply_style.py`); malformed `[edit:…` without `]` is still honoured
 - **Inline `[react:…]`** — reacts to the user's trigger message (respects reaction settings; dedup fixed so failed reactions can retry)
 - **Auto Typos** (optional, off by default) — when the user's message has no `?`, a configurable chance replaces one common word with a realistic misspelling (`teh`, `definately`, transpositions, etc.), sends that version, then auto-corrects after a delay. **711-word list** in `lib/typo_wordlist.py`. Configure under **Reactions & Media → Message Edits**: enable toggle, **Auto Typo Chance** slider (0–100%), fix delay min/max. LLM `[edit:…]` always takes priority over auto typos.
 - Legacy ~4% random post-send typo/thought edits still run when auto typos do not fire (`lib/reply_style.py`)
@@ -109,39 +109,45 @@ Optional relationship memory — who someone is to the bot and how the bot shoul
 
 Disabled by default. Enable under **Memory → User Profiling**. Legacy per-guild profile rows merge automatically on startup.
 
-### Personality & presence
+### Personality, status & presence
 
 - **Presets**: Lurker, Helper, Chatterbox, Moderator
 - **Reply modes**: default, mentions-only, reactions-only, never (global, per-server, or per-channel)
 - **Keyword triggers**, **always-respond role IDs**, allowlists/denylists
 - **Separate DM settings**, **quiet hours (UTC)**, **activity decay**
-- **Random Discord status** — while awake, periodically rotates status/activity on a timer (daemon loop); asleep shows custom status *sleeping*; cycling off clears to online with no activity
-- **Morning greeting** — hourly cron; LLM-written daily message from instructions
-- **Sleep schedule** — goodnight → dormant → wake; buffered overnight @mentions; optional forced wake on repeated pings
-- **Quiet outreach** — proactive starters when channels go quiet
+- **Random Discord status** — while awake, periodically rotates status/activity on a timer (daemon loop); asleep shows a sleep-related custom status from `statuses/sleep.json`; cycling off clears to online with no activity
+- **Morning greeting** — hourly cron; LLM-written daily message from instructions (shared `lib/proactive_llm.py` path with disable-thinking + retry)
+- **Sleep schedule** — goodnight → dormant → wake; buffered overnight @mentions; optional forced wake on repeated pings; LLM goodnight uses the same proactive LLM path
+- **Quiet outreach** — proactive starters when channels go quiet; LLM outreach uses the same proactive LLM path
 
-#### Random Discord status (Presence tab)
+#### Random Discord status (Status tab)
 
 Configurable ambient presence while the bot is awake (`lib/presence.py`; updated every 1s in the daemon loop, applied on a configurable interval):
 
 | State | Discord presence |
 |-------|------------------|
-| **Asleep** (sleep schedule) | Idle + custom status *sleeping* |
+| **Asleep** (sleep schedule) | Idle + sleep-related custom status |
 | **Quiet hours** | Idle, no activity |
-| **Awake + cycling on** | Random pick from enabled presets + custom lines |
+| **Awake + cycling on** | Random pick from enabled presets, custom lines, or (optional) LLM-written short status |
 | **Awake + cycling off** | Online, activity cleared |
 
-**Presence tab → Random Discord Status:**
+**Status tab → Random Discord Status:**
 
 - **Toggle** — enable/disable rotation (default on)
+- **LLM Status Chance (%)** — optional roll for a chat-relevant LLM custom status instead of the preset pool; **Test LLM status** calls `POST …/status/llm/test`
 - **Change every (minutes)** — 5–180 (default 10)
 - **Default activities** — checkboxes grouped by type:
   - **No activity** — cleared status
   - **Custom status** — plain vibe text (e.g. *enjoying alone time*, *looking forward to Friday*, *daydreaming*) via Discord `CustomActivity`
-  - **Listening / Watching / Playing / Competing** — typed activities (`listening: chat`, `playing: D&D`, etc.)
+  - **Listening / Watching / Playing / Competing / Studying / Working / Eating** — typed or custom activities (`listening: chat`, `playing: D&D`, etc.)
 - **Custom activities** — one line per extra entry; plain text = custom status; use `playing:`, `listening:`, `watching:`, or `competing:` prefixes for typed activities; `-` for cleared
+- **JSON-backed defaults** — edit `statuses/awake.json` to change the built-in preset catalog shown in the UI, and `statuses/sleep.json` to add or change sleep-only custom statuses without touching Python code; invalid `awake.json` rows are skipped (not a whole-file failure)
 
 Legacy `presence_activities` lists migrate automatically to preset checkboxes + custom lines on load.
+
+#### Schedules & quiet hours (Presence tab)
+
+Quiet hours, DM overrides, sleep schedule, morning greeting / goodnight targets, outreach targets, and safety settings live under **Presence** (separate from **Status**).
 
 ### Discord-native capabilities
 
@@ -164,7 +170,7 @@ After responding, non-@mention messages can be ignored for a configurable period
 
 All configuration is in the plugin settings UI. Global defaults apply everywhere unless a per-server override is set.
 
-**Global Settings tabs:** General · Replies · Reactions & Media · Memory · Profiles · Presence · Advanced · Debug (gate traces + **LLM Debug Messaging** popup)
+**Global Settings tabs:** General · Replies · Reactions & Media · Memory · Profiles · **Status** · **Presence** · Advanced · Debug (gate traces + **LLM Debug Messaging** popup)
 
 See [`configuration_guide.md`](configuration_guide.md) for a full walkthrough of every setting.
 
@@ -184,7 +190,6 @@ Registered in `plugin.json` and run by Sapphire's scheduler:
 ```
 leona_discord/
 ├── _compat.py                 # Portable imports (plugins/ or user/plugins/)
-├── DUAL_PLACEMENT.md          # Dual install path notes
 ├── daemon.py                  # Lifecycle entry point
 ├── handlers/
 │   ├── on_message.py          # Discord message handler
@@ -205,7 +210,11 @@ leona_discord/
 │   ├── profile_distill_llm.py # LLM fact/summary extraction
 │   ├── llm_debug.py           # Prompt/response capture for debug UI
 │   ├── settings.py            # Settings merge and live reads
-│   ├── presence.py            # Quiet hours, random Discord status cycling
+│   ├── proactive_llm.py       # Shared LLM path for greeting / goodnight / outreach
+│   ├── greeting_llm.py        # Morning greeting text generation
+│   ├── goodnight_llm.py       # Goodnight text generation
+│   ├── outreach_llm.py        # Quiet-channel outreach text generation
+│   ├── presence.py            # Quiet hours, random Discord status cycling, LLM status
 │   ├── sleep_schedule.py      # Sleep/wake state
 │   ├── store.py               # SQLite: messages, search, traces
 │   └── …                      # reactions, images, safety, typing, etc.
@@ -221,6 +230,9 @@ leona_discord/
 │   └── profile_distill.py
 ├── tools/
 │   └── discord_tools.py
+├── statuses/
+│   ├── awake.json             # Built-in awake presence preset catalog
+│   └── sleep.json             # Editable sleep-only custom statuses
 ├── web/
 │   └── index.js               # Tabbed settings UI
 ├── configuration_guide.md     # Detailed settings reference (incl. user profiling)

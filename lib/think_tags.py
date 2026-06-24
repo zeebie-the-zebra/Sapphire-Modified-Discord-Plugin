@@ -2,19 +2,20 @@
 
 import re
 
-# Matches <think>...</think>, <seed:think>...</seed:think>, <seed:cot_budget_reflect>...</seed:cot_budget_reflect>
+# Matches common thinking blocks (closed).
 _THINK_CLOSE_RE = re.compile(
-    r"<(?:seed:)?think[^>]*>[\s\S]*?</(?:seed:think|seed:cot_budget_reflect|think)>",
+    r"<(?:redacted_thinking|thinking|(?:seed:)?think|seed:cot_budget_reflect)[^>]*>"
+    r"[\s\S]*?</(?:redacted_thinking|thinking|(?:seed:)?think|seed:cot_budget_reflect)>",
     re.IGNORECASE,
 )
-# Matches unclosed think tags (everything from <think...> to end of string)
+# Matches unclosed thinking blocks (everything from the opening tag to end of string).
 _THINK_OPEN_RE = re.compile(
-    r"<(?:seed:)?think[^>]*>.*$",
+    r"<(?:redacted_thinking|thinking|(?:seed:)?think|seed:cot_budget_reflect)[^>]*>.*$",
     re.DOTALL | re.IGNORECASE,
 )
-# Matches leading text before a closing think tag (e.g. junk before </think>)
+# Matches leading text before a closing think tag.
 _THINK_LEAD_RE = re.compile(
-    r"^[\s\S]*</(?:seed:think|seed:cot_budget_reflect|think)>",
+    r"^[\s\S]*</(?:redacted_thinking|thinking|(?:seed:)?think|seed:cot_budget_reflect)>",
     re.IGNORECASE,
 )
 

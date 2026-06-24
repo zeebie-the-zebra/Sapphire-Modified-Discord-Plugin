@@ -229,6 +229,25 @@ def get_last_human_message_at(account: str, channel_id: str) -> Optional[float]:
     return float(row["created_at"])
 
 
+def get_most_recent_channel_for_account(account: str) -> tuple[str, str] | tuple[None, None]:
+    """Return (guild_id, channel_id) for the most recently active channel on this account."""
+    with _lock:
+        conn = _db()
+        row = conn.execute(
+            """
+            SELECT guild_id, channel_id
+            FROM channel_messages
+            WHERE account = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (account,),
+        ).fetchone()
+    if not row:
+        return None, None
+    return (row["guild_id"] or "", row["channel_id"] or "")
+
+
 def get_last_outreach_at(account: str, channel_id: str) -> Optional[float]:
     """Unix timestamp of the last proactive quiet-channel outreach, or None."""
     with _lock:

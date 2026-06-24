@@ -18,6 +18,7 @@ from plugins.leona_discord.lib.reply_style import (
     maybe_append_casual_emoji,
     plan_explicit_edit,
     plan_post_send_edit,
+    resolve_edit_chunk_index,
     should_quote_reply,
     SHORT_REPLY_EMOJI_MAX_CHARS,
 )
@@ -221,7 +222,7 @@ def reply_handler(task, event_data: dict, response_text: str):
     edit_plan = None
     post_send_edit_kind = None
     if inline_edit_text and edits_enabled and chunks:
-        edit_chunk_idx = 0 if len(chunks) == 1 else len(chunks) - 1
+        edit_chunk_idx = resolve_edit_chunk_index(chunks, response_text)
         edit_plan = plan_explicit_edit(chunks[edit_chunk_idx], inline_edit_text)
         if edit_plan:
             post_send_edit_kind = "llm_edit"

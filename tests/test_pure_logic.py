@@ -17,6 +17,11 @@ if _sapphire_root not in sys.path:
 # ── think_tags ────────────────────────────────────────────────────────────
 
 class TestStripThinkTags:
+    def test_removes_thinking_tags(self):
+        from plugins.leona_discord.lib.think_tags import strip_think_tags
+        text = "Before <thinking>reasoning</thinking> After"
+        assert strip_think_tags(text) == "Before  After"
+
     def test_removes_complete_tags(self):
         from plugins.leona_discord.lib.think_tags import strip_think_tags
         text = "Hello <think>I am thinking </think> world"
@@ -1236,6 +1241,54 @@ class TestInlineTags:
         assert "absolutly right" in parsed.clean
         assert "\n\n" in parsed.clean
 
+    def test_nested_react_inside_edit_tag_is_stripped_from_edit_target(self):
+        from plugins.leona_discord.lib.inline_tags import parse_inline_tags
+
+        raw = (
+            "alive and broken [edit:alive and immediately hearing about things being broken, "
+            "classic zeebie energy [react:💀]]"
+        )
+        parsed = parse_inline_tags(raw)
+        assert parsed.inline_edit_text == (
+            "alive and immediately hearing about things being broken, classic zeebie energy"
+        )
+
+    def test_multiline_edit_on_first_paragraph_targets_first_chunk(self):
+        from plugins.leona_discord.lib.inline_tags import parse_inline_tags
+        from plugins.leona_discord.lib.reply_style import plan_explicit_edit, resolve_edit_chunk_index
+
+        raw = (
+            "oh god [react:🤦]\n\n"
+            "ok let me try\n\n"
+            "your absolutly right [edit:you're absolutely right"
+        )
+        parsed = parse_inline_tags(raw)
+        chunks = [p.strip() for p in parsed.clean.split("\n\n") if p.strip()]
+        idx = resolve_edit_chunk_index(chunks, raw)
+        assert idx == len(chunks) - 1
+        plan = plan_explicit_edit(chunks[idx], parsed.inline_edit_text)
+        assert plan is not None
+        assert plan[2] == "you're absolutely right"
+
+    def test_user_report_duplicate_first_line_edit_bug(self):
+        from plugins.leona_discord.lib.inline_tags import parse_inline_tags
+        from plugins.leona_discord.lib.reply_style import plan_explicit_edit, resolve_edit_chunk_index
+
+        raw = (
+            "<think>Alright, let me respond naturally.</think>\n\n"
+            "[react:💀]\n\n"
+            "alive and immediately hearing about things being broken, classic zeebie energy "
+            "[edit:alive and immediately hearing about things being broken, classic zeebie energy [react:💀]]\n\n"
+            "you feeling better at least? or are you debugging while still running on fumes"
+        )
+        parsed = parse_inline_tags(raw)
+        chunks = [p.strip() for p in parsed.clean.split("\n\n") if p.strip()]
+        assert len(chunks) == 2
+        idx = resolve_edit_chunk_index(chunks, raw)
+        assert idx == 0
+        plan = plan_explicit_edit(chunks[idx], parsed.inline_edit_text)
+        assert plan is None
+
 
 class TestAutoTypo:
     def test_wordlist_size(self):
@@ -1457,6 +1510,17 @@ class TestPresenceActivities:
         assert "playing: D&D" in pool
         assert "listening: my playlist" in pool
 
+    def test_normalize_enabled_preset_ids_keeps_full_catalog(self):
+        from plugins.leona_discord.lib.presence import (
+            _normalize_enabled_preset_ids,
+            valid_preset_ids,
+        )
+
+        all_ids = sorted(valid_preset_ids())
+        assert len(all_ids) >= 5
+        normalized = _normalize_enabled_preset_ids(all_ids)
+        assert normalized == all_ids
+
     def test_legacy_presence_activities_migrate(self):
         from plugins.leona_discord.lib.presence import resolve_presence_selection
 
@@ -1467,6 +1531,182 @@ class TestPresenceActivities:
         assert "watching_server" in enabled
         assert "listening_chat" in enabled
         assert custom == []
+
+    def test_status_json_overrides_can_be_loaded(self, tmp_path, monkeypatch):
+        import json
+        from plugins.leona_discord.lib import presence
+
+        status_dir = tmp_path / "statuses"
+        status_dir.mkdir()
+        (status_dir / "awake.json").write_text(json.dumps([
+            {
+                "id": "custom_test",
+                "category": "custom",
+                "label": "Test status",
+                "value": "test status",
+            }
+        ]), encoding="utf-8")
+        (status_dir / "sleep.json").write_text(json.dumps([
+            "custom: asleep",
+            "custom: hibernating",
+        ]), encoding="utf-8")
+
+        monkeypatch.setattr(presence, "_status_config_dir", lambda: status_dir)
+
+        presets = presence._load_presence_activity_presets()
+        sleep_statuses = presence._load_sleep_activity_texts()
+
+        assert presets == [{
+            "id": "custom_test",
+            "category": "custom",
+            "label": "Test status",
+            "value": "test status",
+        }]
+        assert sleep_statuses == (
+            "custom: asleep",
+            "custom: hibernating",
+        )
+
+    def test_status_json_falls_back_when_invalid(self, tmp_path, monkeypatch):
+        from plugins.leona_discord.lib import presence
+
+        status_dir = tmp_path / "statuses"
+        status_dir.mkdir()
+        (status_dir / "awake.json").write_text('{"bad": true}', encoding="utf-8")
+        (status_dir / "sleep.json").write_text('["custom: valid", 123]', encoding="utf-8")
+
+        monkeypatch.setattr(presence, "_status_config_dir", lambda: status_dir)
+
+        presets = presence._load_presence_activity_presets()
+        sleep_statuses = presence._load_sleep_activity_texts()
+
+        assert presets == presence._DEFAULT_PRESENCE_ACTIVITY_PRESETS
+        assert sleep_statuses == ("custom: valid",)
+
+    def test_status_json_ignores_duplicate_awake_presets(self, tmp_path, monkeypatch):
+        import json
+        from plugins.leona_discord.lib import presence
+
+        status_dir = tmp_path / "statuses"
+        status_dir.mkdir()
+        (status_dir / "awake.json").write_text(json.dumps([
+            {
+                "id": "custom_test",
+                "category": "custom",
+                "label": "Test status",
+                "value": "test status",
+            },
+            {
+                "id": "custom_test",
+                "category": "custom",
+                "label": "Test status duplicate",
+                "value": "duplicate should be ignored",
+            },
+            {
+                "id": "custom_second",
+                "category": "custom",
+                "label": "Second status",
+                "value": "second status",
+            },
+        ]), encoding="utf-8")
+        (status_dir / "sleep.json").write_text(json.dumps([
+            "custom: asleep",
+        ]), encoding="utf-8")
+
+        monkeypatch.setattr(presence, "_status_config_dir", lambda: status_dir)
+
+        presets = presence._load_presence_activity_presets()
+
+        assert presets == [
+            {
+                "id": "custom_test",
+                "category": "custom",
+                "label": "Test status",
+                "value": "test status",
+            },
+            {
+                "id": "custom_second",
+                "category": "custom",
+                "label": "Second status",
+                "value": "second status",
+            },
+        ]
+
+    def test_generated_presence_status_is_sanitized(self):
+        from plugins.leona_discord.lib.presence import sanitize_generated_presence_status
+
+        assert sanitize_generated_presence_status('  "thinking about pizza"  \nsecond line') == "thinking about pizza"
+        assert sanitize_generated_presence_status("status: overcaffeinated today") == "overcaffeinated today"
+        assert sanitize_generated_presence_status("") == ""
+        assert sanitize_generated_presence_status(
+            "<think>planning...</think>\n\nwaiting for coffee"
+        ) == "waiting for coffee"
+        assert sanitize_generated_presence_status(
+            "<think>only thinking, no closing tag"
+        ) == ""
+        assert sanitize_generated_presence_status(
+            "<thinking>long reasoning here</thinking>\n\nwaiting for coffee"
+        ) == "waiting for coffee"
+
+    def test_presence_llm_gen_params_disable_thinking(self):
+        from plugins.leona_discord.lib.presence import (
+            _presence_llm_gen_params,
+            generate_llm_presence_status,
+        )
+        import inspect
+
+        params = _presence_llm_gen_params({"model": "minimax-m3"}, max_tokens=64)
+        assert params.get("disable_thinking") is True
+        assert params.get("max_tokens") == 64
+        assert params["extra_body"]["chat_template_kwargs"]["enable_thinking"] is False
+        assert params["extra_body"]["thinking"] == {"type": "disabled"}
+
+        source = inspect.getsource(generate_llm_presence_status)
+        assert "for max_tokens in (64, 512)" in source
+        assert "_presence_llm_gen_params" in source
+
+    def test_salvage_presence_from_thinking_quoted(self):
+        from plugins.leona_discord.lib.presence import _salvage_presence_from_thinking
+
+        raw = '<think>maybe "singing along" is best</think>'
+        assert _salvage_presence_from_thinking(raw) == "singing along"
+
+    def test_awake_presence_uses_llm_status_when_roll_hits(self, monkeypatch):
+        from plugins.leona_discord.lib.presence import pick_awake_presence
+
+        monkeypatch.setattr("plugins.leona_discord.lib.presence.random.randint", lambda a, b: 1)
+        monkeypatch.setattr(
+            "plugins.leona_discord.lib.presence.generate_llm_presence_status",
+            lambda account_name, settings: "thinking about goblins",
+        )
+
+        status, activity = pick_awake_presence(
+            {"presence_llm_status_chance": 100, "presence_activity_presets": ["playing_dnd"]},
+            account_name="acct",
+        )
+        assert status == "online"
+        assert activity == "thinking about goblins"
+
+    def test_awake_presence_falls_back_when_llm_status_empty(self, monkeypatch):
+        from plugins.leona_discord.lib.presence import pick_awake_presence
+
+        monkeypatch.setattr("plugins.leona_discord.lib.presence.random.randint", lambda a, b: 1)
+        monkeypatch.setattr(
+            "plugins.leona_discord.lib.presence.generate_llm_presence_status",
+            lambda account_name, settings: "",
+        )
+        monkeypatch.setattr("plugins.leona_discord.lib.presence.random.choice", lambda items: items[0])
+
+        status, activity = pick_awake_presence(
+            {
+                "presence_llm_status_chance": 100,
+                "presence_activity_presets": ["playing_dnd"],
+                "presence_activities_custom": [],
+            },
+            account_name="acct",
+        )
+        assert status == "online"
+        assert activity == "playing: D&D"
 
     def test_sleep_presence_skips_awake_interval(self, monkeypatch):
         from plugins.leona_discord.lib import presence
@@ -1499,6 +1739,36 @@ class TestPresenceActivities:
         presence._last_presence_mode["awake"] = "awake"
         assert _should_skip_presence_update("awake", "awake", 1200.0, 600.0, force=False)
         assert not _should_skip_presence_update("awake", "awake", 1700.0, 600.0, force=False)
+
+    def test_apply_presence_activity_without_loop_returns_false(self, monkeypatch):
+        from plugins.leona_discord.lib import presence
+        from plugins.leona_discord.lib.presence import apply_presence_activity
+
+        monkeypatch.setattr(presence.state, "_loop", None)
+        assert apply_presence_activity("acct", "thinking about snacks") is False
+
+    def test_apply_presence_activity_schedules_presence(self, monkeypatch):
+        from plugins.leona_discord.lib import presence
+        from plugins.leona_discord.lib.presence import apply_presence_activity
+
+        class _Loop:
+            def is_running(self):
+                return True
+
+        scheduled = []
+
+        def fake_run(coro, loop):
+            scheduled.append(coro)
+            return object()
+
+        monkeypatch.setattr(presence.state, "_loop", _Loop())
+        monkeypatch.setattr(presence.asyncio, "run_coroutine_threadsafe", fake_run)
+        monkeypatch.setattr(presence.time, "time", lambda: 4242.0)
+
+        assert apply_presence_activity("acct", "thinking about snacks") is True
+        assert presence._last_presence_update["acct"] == 4242.0
+        assert presence._last_presence_mode["acct"] == "awake"
+        assert len(scheduled) == 1
 
 
 # ── mentions ──────────────────────────────────────────────────────────────
@@ -1540,4 +1810,65 @@ class TestMentionResolution:
         assert mmap.get("spike le vain") == "999888777666555444"
         assert mmap.get("zeebie") == "1"
 
+
+class TestProactiveLlm:
+    def test_proactive_llm_gen_params_disable_thinking(self):
+        from plugins.leona_discord.lib.proactive_llm import proactive_llm_gen_params
+
+        params = proactive_llm_gen_params({"model": "minimax-m3"}, max_tokens=180)
+        assert params.get("disable_thinking") is True
+        assert params.get("max_tokens") == 180
+        assert params["extra_body"]["chat_template_kwargs"]["enable_thinking"] is False
+        assert params["extra_body"]["thinking"] == {"type": "disabled"}
+
+    def test_salvage_proactive_from_thinking_quoted(self):
+        from plugins.leona_discord.lib.proactive_llm import salvage_proactive_from_thinking
+
+        raw = '<think>hmm maybe "hey everyone, coffee time?" works</think>'
+        assert salvage_proactive_from_thinking(raw) == "hey everyone, coffee time?"
+
+    def test_normalize_proactive_output_strips_thinking(self):
+        from plugins.leona_discord.lib.proactive_llm import normalize_proactive_output
+
+        raw = "<thinking>planning</thinking>\n\nMorning folks — hope you slept well!"
+        assert normalize_proactive_output(raw, {}) == "Morning folks — hope you slept well!"
+
+    def test_run_proactive_llm_retries_on_empty(self, monkeypatch):
+        from plugins.leona_discord.lib import proactive_llm
+
+        calls = []
+
+        class _Resp:
+            def __init__(self, content):
+                self.content = content
+
+        class _ToolEngine:
+            def call_llm_with_metrics(self, provider, messages, gen_params, tools=None):
+                calls.append(gen_params.get("max_tokens"))
+                if len(calls) == 1:
+                    return _Resp("<think>only thinking</think>")
+                return _Resp("Good morning, homelab!")
+
+        class _LLM:
+            tool_engine = _ToolEngine()
+
+            def _select_provider(self):
+                return "opencodego", object(), "minimax-m3"
+
+        class _System:
+            llm_chat = _LLM()
+
+        monkeypatch.setattr(
+            proactive_llm,
+            "resolve_proactive_provider",
+            lambda system, pk, mn: ("opencodego", object(), {"model": "minimax-m3"}),
+        )
+        text = proactive_llm.run_proactive_llm(
+            _System(),
+            prompt="say hi",
+            account="",
+            log_label="Greeting",
+        )
+        assert text == "Good morning, homelab!"
+        assert calls == [180, 512]
 

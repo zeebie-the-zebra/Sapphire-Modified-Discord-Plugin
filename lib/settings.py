@@ -57,6 +57,7 @@ SETTING_DEFAULTS = {
     "quiet_hours_mode": "reactions_only",
     "presence_cycling_enabled": True,
     "presence_cycle_interval_minutes": 10,
+    "presence_llm_status_chance": 0,
     "presence_activity_presets": [
         "clear",
         "listening_chat",
